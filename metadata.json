@@ -1,0 +1,5 @@
+{
+  "name": "CourtMaster AI",
+  "description": "Piattaforma intelligente per la prenotazione di lezioni di Tennis e Padel con integrazione calendario e piani di allenamento generati dall'IA.",
+  "requestFramePermissions": []
+}
