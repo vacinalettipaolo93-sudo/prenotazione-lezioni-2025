@@ -528,44 +528,54 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
               {/* Sports Management */}
               <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700">
                   <h3 className="text-xl font-bold text-white mb-1">Sport</h3>
-                  <p className="text-sm text-slate-500 mb-4">Gestisci le attività prenotabili.</p>
+                  <p className="text-sm text-slate-500 mb-4">Gestisci le attività prenotabili. Clicca Modifica per cambiare nome, icona o descrizione.</p>
                   <ul className="space-y-2 mb-6">
                       {config.sports.map(sport => (
-                          <li key={sport.id} className="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-slate-700">
+                          <li key={sport.id} className="flex flex-col p-3 bg-slate-800 rounded-lg border border-slate-700 gap-2">
                               {editingSportId === sport.id ? (
-                                  <div className="flex-1 flex items-center gap-2">
+                                  <div className="flex flex-col gap-2 w-full">
+                                      <div className="flex gap-2">
+                                        <input 
+                                            className="w-12 p-2 bg-slate-900 border border-slate-600 rounded text-center text-xl"
+                                            value={tempSport.emoji}
+                                            onChange={(e) => setTempSport({...tempSport, emoji: e.target.value})}
+                                        />
+                                        <input 
+                                            className="flex-1 p-2 bg-slate-900 border border-slate-600 rounded text-white font-medium"
+                                            value={tempSport.name}
+                                            onChange={(e) => setTempSport({...tempSport, name: e.target.value})}
+                                            placeholder="Nome Sport"
+                                        />
+                                      </div>
                                       <input 
-                                        className="w-10 p-1 bg-slate-900 border border-slate-600 rounded text-center"
-                                        value={tempSport.emoji}
-                                        onChange={(e) => setTempSport({...tempSport, emoji: e.target.value})}
+                                        className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-sm text-slate-300"
+                                        value={tempSport.description}
+                                        onChange={(e) => setTempSport({...tempSport, description: e.target.value})}
+                                        placeholder="Descrizione (es. Migliora il tuo dritto)"
                                       />
-                                      <input 
-                                        className="flex-1 p-1 bg-slate-900 border border-slate-600 rounded text-white"
-                                        value={tempSport.name}
-                                        onChange={(e) => setTempSport({...tempSport, name: e.target.value})}
-                                        placeholder="Nome Sport"
-                                      />
-                                      <button onClick={saveEditSport} className="p-1 text-emerald-400 hover:bg-emerald-900/20 rounded">
-                                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
-                                      </button>
-                                      <button onClick={() => setEditingSportId(null)} className="p-1 text-slate-400 hover:bg-slate-700 rounded">
-                                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                                      </button>
+                                      <div className="flex justify-end gap-2 mt-1">
+                                        <Button onClick={saveEditSport} variant="secondary" className="px-3 py-1 text-xs">Salva Modifiche</Button>
+                                        <Button onClick={() => setEditingSportId(null)} variant="ghost" className="px-3 py-1 text-xs">Annulla</Button>
+                                      </div>
                                   </div>
                               ) : (
-                                  <>
-                                    <span className="font-medium text-lg flex items-center text-slate-200">
-                                        <span className="mr-3 text-2xl">{sport.emoji}</span>{sport.name}
-                                    </span>
-                                    <div className="flex items-center gap-1">
-                                        <button onClick={() => startEditSport(sport)} className="text-slate-500 hover:text-indigo-400 p-2 rounded hover:bg-slate-700/50 transition-colors">
-                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
-                                        </button>
-                                        <button onClick={() => { if(confirm('Eliminare questo sport?')) removeSport(sport.id); }} className="text-slate-500 hover:text-red-400 p-2 rounded hover:bg-slate-700/50 transition-colors">
-                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                        </button>
-                                    </div>
-                                  </>
+                                  <div className="flex justify-between items-center">
+                                      <div className="flex items-center gap-3">
+                                          <span className="text-2xl">{sport.emoji}</span>
+                                          <div>
+                                              <span className="font-medium text-lg text-slate-200 block">{sport.name}</span>
+                                              <span className="text-xs text-slate-500 block">{sport.description}</span>
+                                          </div>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                          <button onClick={() => startEditSport(sport)} className="text-slate-400 hover:text-indigo-400 p-2 rounded hover:bg-slate-700/50 transition-colors">
+                                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                          </button>
+                                          <button onClick={() => { if(confirm('Eliminare questo sport?')) removeSport(sport.id); }} className="text-slate-400 hover:text-red-400 p-2 rounded hover:bg-slate-700/50 transition-colors">
+                                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                          </button>
+                                      </div>
+                                  </div>
                               )}
                           </li>
                       ))}
@@ -610,10 +620,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                         className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-xs"
                                         value={tempLocation.googleCalendarId}
                                         onChange={(e) => setTempLocation({...tempLocation, googleCalendarId: e.target.value})}
-                                        placeholder="ID Google Calendar"
+                                        placeholder="ID Google Calendar (opzionale)"
                                       />
                                       <div className="flex justify-end gap-2 mt-1">
-                                        <Button onClick={saveEditLocation} variant="secondary" className="px-3 py-1 text-xs">Salva</Button>
+                                        <Button onClick={saveEditLocation} variant="secondary" className="px-3 py-1 text-xs">Salva Modifiche</Button>
                                         <Button onClick={() => setEditingLocationId(null)} variant="ghost" className="px-3 py-1 text-xs">Annulla</Button>
                                       </div>
                                   </div>
@@ -622,13 +632,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                       <div className="flex-1 w-full">
                                           <div className="font-medium text-slate-200 flex items-center gap-2">
                                               {loc.name}
-                                              <button onClick={() => startEditLocation(loc)} className="text-slate-500 hover:text-indigo-400 p-1">
-                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                              <button onClick={() => startEditLocation(loc)} className="text-slate-500 hover:text-indigo-400 p-1 rounded hover:bg-slate-700/50">
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                                               </button>
                                           </div>
                                           <div className="text-xs text-slate-500 mb-1">{loc.address}</div>
-                                          <div className="text-[10px] text-indigo-400 font-mono bg-indigo-900/20 inline-block px-1 rounded">
-                                              {loc.googleCalendarId ? `Cal ID: ${loc.googleCalendarId.substring(0,15)}...` : 'No Cal ID'}
+                                          <div className="text-[10px] text-indigo-400 font-mono bg-indigo-900/20 inline-block px-1 rounded truncate max-w-[200px]">
+                                              {loc.googleCalendarId ? `Cal ID: ${loc.googleCalendarId}` : 'Nessun Cal ID'}
                                           </div>
                                       </div>
                                       <button onClick={() => { if(confirm('Eliminare questa sede?')) removeLocation(loc.id); }} className="text-slate-500 hover:text-red-400 p-2 self-start sm:self-center">
