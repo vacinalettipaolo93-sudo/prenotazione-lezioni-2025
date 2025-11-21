@@ -527,7 +527,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                         placeholder="Descrizione breve"
                                     />
                                     <div className="flex gap-2 md:col-span-2 justify-end">
-                                        <Button size="sm" onClick={saveEditSport} className="text-xs py-1 px-3">Salva</Button>
+                                        <Button onClick={saveEditSport} className="text-xs py-1 px-3">Salva</Button>
                                         <button onClick={() => setEditingSportId(null)} className="text-slate-400 text-xs hover:text-white">Annulla</button>
                                     </div>
                                 </div>
@@ -597,7 +597,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                         placeholder="ID Google Calendar (opzionale)"
                                     />
                                     <div className="flex gap-2 md:col-span-2 justify-end">
-                                        <Button size="sm" onClick={saveEditLocation} className="text-xs py-1 px-3">Salva</Button>
+                                        <Button onClick={saveEditLocation} className="text-xs py-1 px-3">Salva</Button>
                                         <button onClick={() => setEditingLocationId(null)} className="text-slate-400 text-xs hover:text-white">Annulla</button>
                                     </div>
                                 </div>

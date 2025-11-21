@@ -146,7 +146,7 @@ const BookingFlow: React.FC = () => {
                             <p className="text-sm text-slate-400 mt-1 font-light">{sport.description}</p>
                         </div>
                         {selectedSport?.id === sport.id && (
-                            <div className="w-6 h-6 rounded-full bg-indigo-500 text-white flex items-center justify-center">
+                            <div className="w-6 h-6 rounded-full bg-indigo-500 text-white flex items-center justify-center shadow-lg shadow-indigo-500/50">
                                 <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"></path></svg>
                             </div>
                         )}
@@ -205,7 +205,7 @@ const BookingFlow: React.FC = () => {
   // Step 2: Date & Time
   if (currentStep === 1) {
       return (
-        <div className="space-y-6">
+        <div className="space-y-6 animate-in fade-in">
             <div className="flex items-center justify-between mb-2">
                 <button onClick={() => setCurrentStep(0)} className="text-slate-400 hover:text-white text-sm flex items-center gap-1 transition-colors">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
@@ -242,3 +242,163 @@ const BookingFlow: React.FC = () => {
                         <div key={i} className="h-12 bg-slate-700/50 rounded-lg animate-pulse"></div>
                     )) : availableSlots.length > 0 ? availableSlots.map(slot => (
                         <button
+                            key={slot.id}
+                            disabled={!slot.isAvailable}
+                            onClick={() => setSelectedSlot(slot)}
+                            className={`py-3 px-2 rounded-xl text-sm font-medium transition-all relative overflow-hidden ${
+                                selectedSlot?.id === slot.id 
+                                ? 'bg-indigo-600 text-white shadow-lg ring-2 ring-indigo-400 ring-offset-2 ring-offset-slate-900' 
+                                : slot.isAvailable 
+                                    ? 'bg-slate-700/50 text-slate-200 hover:bg-slate-600 hover:text-white border border-slate-600/50' 
+                                    : 'bg-slate-900/50 text-slate-600 cursor-not-allowed border border-transparent'
+                            }`}
+                        >
+                            {new Date(slot.startTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </button>
+                    )) : (
+                        <div className="col-span-full text-center py-10 text-slate-500">
+                            Nessuno slot disponibile per questa data.
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div className="flex justify-center pt-4">
+                <Button 
+                    disabled={!selectedSlot} 
+                    onClick={() => setCurrentStep(2)}
+                    className="w-full md:w-auto md:min-w-[200px]"
+                >
+                    Continua
+                </Button>
+            </div>
+        </div>
+      );
+  }
+
+  // Step 3: User Details
+  if (currentStep === 2) {
+      return (
+          <div className="space-y-6 animate-in fade-in">
+            <button onClick={() => setCurrentStep(1)} className="text-slate-400 hover:text-white text-sm flex items-center gap-1 transition-colors mb-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
+                Indietro
+            </button>
+            
+            <div className="bg-slate-800/50 backdrop-blur rounded-2xl border border-slate-700 p-6 md:p-8 shadow-xl">
+                <h2 className="text-2xl font-bold text-white mb-6">I tuoi Dati</h2>
+                <div className="space-y-5">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Nome Completo</label>
+                            <input 
+                                type="text" 
+                                className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                                value={formData.name}
+                                onChange={e => setFormData({...formData, name: e.target.value})}
+                                placeholder="Il tuo nome"
+                            />
+                        </div>
+                         <div>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Email</label>
+                            <input 
+                                type="email" 
+                                className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                                value={formData.email}
+                                onChange={e => setFormData({...formData, email: e.target.value})}
+                                placeholder="tu@email.com"
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                         <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Livello di Gioco</label>
+                         <div className="grid grid-cols-3 gap-3">
+                             {['Beginner', 'Intermediate', 'Advanced'].map(level => (
+                                 <button 
+                                    key={level}
+                                    onClick={() => setFormData({...formData, level: level as any})}
+                                    className={`py-3 rounded-xl text-sm font-medium transition-all border ${formData.level === level 
+                                        ? 'bg-indigo-600 text-white border-indigo-500' 
+                                        : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
+                                 >
+                                     {level === 'Beginner' ? 'Principiante' : level === 'Intermediate' ? 'Intermedio' : 'Avanzato'}
+                                 </button>
+                             ))}
+                         </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Note per l'istruttore (Opzionale)</label>
+                        <textarea 
+                            className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all min-h-[100px]"
+                            value={formData.notes}
+                            onChange={e => setFormData({...formData, notes: e.target.value})}
+                            placeholder="Su cosa vuoi lavorare oggi?"
+                        />
+                    </div>
+                </div>
+            </div>
+
+             <div className="flex justify-center pt-4">
+                <Button 
+                    disabled={!formData.name || !formData.email} 
+                    onClick={handleConfirm}
+                    isLoading={isSubmitting}
+                    className="w-full md:w-auto md:min-w-[250px] py-4 text-lg"
+                >
+                    Conferma Prenotazione
+                </Button>
+            </div>
+          </div>
+      );
+  }
+
+  // Step 4: Success
+  if (currentStep === 3 && confirmedBooking) {
+      return (
+          <div className="text-center py-10 animate-in zoom-in duration-500">
+              <div className="w-24 h-24 bg-emerald-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-emerald-500/30">
+                  <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+              </div>
+              <h2 className="text-4xl font-bold text-white mb-2">Prenotazione Confermata!</h2>
+              <p className="text-slate-400 mb-8">Ti abbiamo inviato una mail di conferma.</p>
+
+              <div className="bg-slate-800/80 backdrop-blur rounded-2xl border border-slate-700 p-8 max-w-2xl mx-auto text-left shadow-2xl">
+                  <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-6">
+                      <div className="bg-slate-700 p-3 rounded-lg">
+                         <svg className="w-6 h-6 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                      </div>
+                      <div>
+                          <div className="font-bold text-white text-lg capitalize">
+                              {new Date(confirmedBooking.date).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long'})}
+                          </div>
+                          <div className="text-indigo-400">
+                              {new Date(confirmedBooking.startTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {selectedDuration?.minutes} min
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="space-y-4">
+                      <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500">Piano di Allenamento Generato da IA</h3>
+                      <div className="prose prose-invert prose-sm max-w-none bg-slate-900/50 p-6 rounded-xl border border-slate-700/50">
+                         {generatedPlan.split('\n').map((line, i) => (
+                             <p key={i} className={line.startsWith('**') || line.startsWith('#') ? 'font-bold text-white mt-4' : 'text-slate-300'}>
+                                 {line.replace(/\*\*/g, '').replace(/#/g, '')}
+                             </p>
+                         ))}
+                      </div>
+                  </div>
+              </div>
+              
+              <div className="mt-10">
+                  <Button variant="outline" onClick={() => window.location.reload()}>Torna alla Home</Button>
+              </div>
+          </div>
+      );
+  }
+
+  return null;
+};
+
+export default BookingFlow;
