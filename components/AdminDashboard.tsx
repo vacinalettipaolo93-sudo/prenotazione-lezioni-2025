@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { CalendarEvent, AppConfig, WeeklySchedule, Location } from '../types';
+import { CalendarEvent, AppConfig, WeeklySchedule, Location, Sport } from '../types';
 import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase, exportBookingsToGoogle, getBookings } from '../services/calendarService';
-import { getAppConfig, addSport, removeSport, addLocation, removeLocation, addDuration, removeDuration, updateHomeConfig, updateLocationSchedule, updateLocationDetails, updateMinBookingNotice } from '../services/configService';
+import { getAppConfig, addSport, updateSport, removeSport, addLocation, updateLocationDetails, removeLocation, addDuration, removeDuration, updateHomeConfig, updateLocationSchedule, updateMinBookingNotice, initConfigListener } from '../services/configService';
 import { logout } from '../services/authService';
 import Button from './Button';
 
@@ -20,10 +20,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [config, setConfig] = useState<AppConfig>(getAppConfig());
   const [publicLinkCopied, setPublicLinkCopied] = useState(false);
 
-  // Sim Event Form
-  const [simEventTitle, setSimEventTitle] = useState('');
-  
-  // Config Forms
+  // --- EDITING STATES ---
+  const [editingSportId, setEditingSportId] = useState<string | null>(null);
+  const [tempSport, setTempSport] = useState<Partial<Sport>>({});
+
+  const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
+  const [tempLocation, setTempLocation] = useState<Partial<Location>>({});
+
+  // Config Forms (New Items)
   const [newSportName, setNewSportName] = useState('');
   const [newSportEmoji, setNewSportEmoji] = useState('');
   const [newLocationName, setNewLocationName] = useState('');
@@ -41,14 +45,24 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [slotInterval, setSlotInterval] = useState<30 | 60>(60);
 
   useEffect(() => {
-    // Inizializza Google Client all'avvio della dashboard
-    initGoogleClient().then(() => {
-        console.log("Google API initialized");
+    // Inizializza Google Client
+    initGoogleClient();
+    
+    // Iscriviti agli aggiornamenti della configurazione in tempo reale
+    const unsub = initConfigListener((newConfig) => {
+        setConfig(newConfig);
+        // Sync local states if not editing
+        setHomeTitle(newConfig.homeTitle);
+        setHomeSubtitle(newConfig.homeSubtitle);
+        setNoticeHours((newConfig.minBookingNoticeMinutes || 0) / 60);
     });
-    refreshData();
+
+    refreshEvents();
+
+    return () => unsub();
   }, []);
 
-  // When config loads, select first location for schedule editing by default
+  // When config loads, select first location for schedule editing by default if none selected
   useEffect(() => {
       if (config.locations.length > 0 && !selectedLocationId) {
           setSelectedLocationId(config.locations[0].id);
@@ -66,14 +80,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       }
   }, [selectedLocationId, config.locations]);
 
-  const refreshData = () => {
+  const refreshEvents = () => {
     setEvents(getAllCalendarEvents());
     setIsConnected(isCalendarConnected());
-    const cfg = getAppConfig();
-    setConfig(cfg);
-    setHomeTitle(cfg.homeTitle);
-    setHomeSubtitle(cfg.homeSubtitle);
-    setNoticeHours((cfg.minBookingNoticeMinutes || 0) / 60);
   };
 
   const handleConnectCalendar = async () => {
@@ -86,25 +95,24 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         alert("Errore connessione Google Calendar. Controlla console.");
     } finally {
         setIsConnecting(false);
-        refreshData();
+        refreshEvents();
     }
   };
 
   const handleDisconnect = () => {
     disconnectGoogleCalendar();
     setIsConnected(false);
-    refreshData();
+    refreshEvents();
   };
 
   const handleSyncNow = async () => {
       if (!isConnected) return;
       setIsSyncing(true);
       try {
-          // Sync per la prima location che ha un Calendar ID, o 'primary' come fallback
           const calendarId = config.locations[0]?.googleCalendarId || 'primary';
           const count = await syncGoogleEventsToFirebase(calendarId);
           alert(`Sincronizzazione da Google completata! ${count} eventi importati.`);
-          refreshData();
+          refreshEvents();
       } catch (e) {
           alert("Errore durante la sincronizzazione. Assicurati di essere loggato.");
       } finally {
@@ -122,7 +130,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           } else {
               alert("Nessuna nuova prenotazione da esportare (tutte già sincronizzate).");
           }
-          refreshData();
+          refreshEvents();
       } catch (e) {
           console.error(e);
           alert("Errore durante l'esportazione. Verifica la connessione.");
@@ -131,47 +139,66 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       }
   }
 
-  // CMS Handlers
+  // --- SPORT ACTIONS ---
   const handleAddSport = () => {
       if(!newSportName) return;
       addSport({ id: Date.now().toString(), name: newSportName, emoji: newSportEmoji || '⚡️', description: 'Nuova attività' });
       setNewSportName('');
       setNewSportEmoji('');
-      refreshData();
   };
 
+  const startEditSport = (sport: Sport) => {
+      setEditingSportId(sport.id);
+      setTempSport({...sport});
+  };
+
+  const saveEditSport = () => {
+      if (editingSportId && tempSport.name) {
+          updateSport(editingSportId, tempSport);
+          setEditingSportId(null);
+      }
+  };
+
+  // --- LOCATION ACTIONS ---
   const handleAddLocation = () => {
       if(!newLocationName) return;
       addLocation({ id: Date.now().toString(), name: newLocationName, address: newLocationAddr });
       setNewLocationName('');
       setNewLocationAddr('');
-      refreshData();
+  };
+
+  const startEditLocation = (loc: Location) => {
+      setEditingLocationId(loc.id);
+      setTempLocation({...loc});
+  };
+
+  const saveEditLocation = () => {
+      if (editingLocationId && tempLocation.name) {
+          updateLocationDetails(editingLocationId, tempLocation);
+          setEditingLocationId(null);
+      }
   };
 
   const handleAddDuration = () => {
       const mins = parseInt(newDuration);
       if(mins > 0) {
           addDuration({ minutes: mins, label: `${mins} Minuti` });
-          refreshData();
       }
   };
 
   const handleUpdateHome = () => {
       updateHomeConfig(homeTitle, homeSubtitle);
-      refreshData();
       alert('Home aggiornata con successo!');
   }
 
   const handleUpdateNotice = () => {
       updateMinBookingNotice(noticeHours * 60);
-      refreshData();
       alert('Preavviso minimo aggiornato!');
   }
 
   const handleSaveSchedule = () => {
       if (!selectedLocationId || !schedule) return;
       updateLocationSchedule(selectedLocationId, schedule, slotInterval);
-      refreshData();
       alert('Orari aggiornati per la sede selezionata!');
   }
 
@@ -505,10 +532,41 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   <ul className="space-y-2 mb-6">
                       {config.sports.map(sport => (
                           <li key={sport.id} className="flex justify-between items-center p-3 bg-slate-800 rounded-lg border border-slate-700">
-                              <span className="font-medium text-lg flex items-center text-slate-200"><span className="mr-3 text-2xl">{sport.emoji}</span>{sport.name}</span>
-                              <button onClick={() => { removeSport(sport.id); refreshData(); }} className="text-slate-500 hover:text-red-400 p-2">
-                                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                              </button>
+                              {editingSportId === sport.id ? (
+                                  <div className="flex-1 flex items-center gap-2">
+                                      <input 
+                                        className="w-10 p-1 bg-slate-900 border border-slate-600 rounded text-center"
+                                        value={tempSport.emoji}
+                                        onChange={(e) => setTempSport({...tempSport, emoji: e.target.value})}
+                                      />
+                                      <input 
+                                        className="flex-1 p-1 bg-slate-900 border border-slate-600 rounded text-white"
+                                        value={tempSport.name}
+                                        onChange={(e) => setTempSport({...tempSport, name: e.target.value})}
+                                        placeholder="Nome Sport"
+                                      />
+                                      <button onClick={saveEditSport} className="p-1 text-emerald-400 hover:bg-emerald-900/20 rounded">
+                                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                                      </button>
+                                      <button onClick={() => setEditingSportId(null)} className="p-1 text-slate-400 hover:bg-slate-700 rounded">
+                                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                      </button>
+                                  </div>
+                              ) : (
+                                  <>
+                                    <span className="font-medium text-lg flex items-center text-slate-200">
+                                        <span className="mr-3 text-2xl">{sport.emoji}</span>{sport.name}
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                        <button onClick={() => startEditSport(sport)} className="text-slate-500 hover:text-indigo-400 p-2 rounded hover:bg-slate-700/50 transition-colors">
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                        </button>
+                                        <button onClick={() => { if(confirm('Eliminare questo sport?')) removeSport(sport.id); }} className="text-slate-500 hover:text-red-400 p-2 rounded hover:bg-slate-700/50 transition-colors">
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                        </button>
+                                    </div>
+                                  </>
+                              )}
                           </li>
                       ))}
                   </ul>
@@ -533,25 +591,51 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   <p className="text-sm text-slate-500 mb-4">Dove si svolgono le lezioni e su quale calendario salvare.</p>
                   <ul className="space-y-3 mb-6">
                       {config.locations.map(loc => (
-                          <li key={loc.id} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 bg-slate-800 rounded-lg border border-slate-700 gap-3">
-                              <div className="flex-1 w-full">
-                                  <div className="font-medium text-slate-200">{loc.name}</div>
-                                  <div className="text-xs text-slate-500 mb-2">{loc.address}</div>
-                                  <input 
-                                     type="text"
-                                     placeholder="ID Google Calendar (es. primary)"
-                                     className="w-full sm:w-2/3 text-xs p-2 bg-slate-900 border border-slate-600 rounded text-slate-300 focus:border-indigo-500 outline-none placeholder-slate-600"
-                                     defaultValue={loc.googleCalendarId || ''}
-                                     onBlur={(e) => {
-                                         if (e.target.value !== loc.googleCalendarId) {
-                                             updateLocationDetails(loc.id, e.target.value);
-                                         }
-                                     }}
-                                  />
-                              </div>
-                              <button onClick={() => { removeLocation(loc.id); refreshData(); }} className="text-slate-500 hover:text-red-400 p-2 self-start sm:self-center">
-                                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                              </button>
+                          <li key={loc.id} className="flex flex-col p-3 bg-slate-800 rounded-lg border border-slate-700 gap-3">
+                              {editingLocationId === loc.id ? (
+                                  <div className="flex flex-col gap-2 w-full">
+                                      <input 
+                                        className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-sm"
+                                        value={tempLocation.name}
+                                        onChange={(e) => setTempLocation({...tempLocation, name: e.target.value})}
+                                        placeholder="Nome Sede"
+                                      />
+                                      <input 
+                                        className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-xs"
+                                        value={tempLocation.address}
+                                        onChange={(e) => setTempLocation({...tempLocation, address: e.target.value})}
+                                        placeholder="Indirizzo"
+                                      />
+                                      <input 
+                                        className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-xs"
+                                        value={tempLocation.googleCalendarId}
+                                        onChange={(e) => setTempLocation({...tempLocation, googleCalendarId: e.target.value})}
+                                        placeholder="ID Google Calendar"
+                                      />
+                                      <div className="flex justify-end gap-2 mt-1">
+                                        <Button onClick={saveEditLocation} variant="secondary" className="px-3 py-1 text-xs">Salva</Button>
+                                        <Button onClick={() => setEditingLocationId(null)} variant="ghost" className="px-3 py-1 text-xs">Annulla</Button>
+                                      </div>
+                                  </div>
+                              ) : (
+                                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 w-full">
+                                      <div className="flex-1 w-full">
+                                          <div className="font-medium text-slate-200 flex items-center gap-2">
+                                              {loc.name}
+                                              <button onClick={() => startEditLocation(loc)} className="text-slate-500 hover:text-indigo-400 p-1">
+                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                              </button>
+                                          </div>
+                                          <div className="text-xs text-slate-500 mb-1">{loc.address}</div>
+                                          <div className="text-[10px] text-indigo-400 font-mono bg-indigo-900/20 inline-block px-1 rounded">
+                                              {loc.googleCalendarId ? `Cal ID: ${loc.googleCalendarId.substring(0,15)}...` : 'No Cal ID'}
+                                          </div>
+                                      </div>
+                                      <button onClick={() => { if(confirm('Eliminare questa sede?')) removeLocation(loc.id); }} className="text-slate-500 hover:text-red-400 p-2 self-start sm:self-center">
+                                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                      </button>
+                                  </div>
+                              )}
                           </li>
                       ))}
                   </ul>
@@ -580,7 +664,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       {config.durations.map(dur => (
                           <div key={dur.minutes} className="flex items-center gap-2 px-3 py-1 bg-slate-700 text-indigo-300 rounded-full border border-slate-600">
                               <span className="font-bold">{dur.minutes} min</span>
-                              <button onClick={() => { removeDuration(dur.minutes); refreshData(); }} className="text-slate-400 hover:text-red-400 font-bold px-1">×</button>
+                              <button onClick={() => { removeDuration(dur.minutes); }} className="text-slate-400 hover:text-red-400 font-bold px-1">×</button>
                           </div>
                       ))}
                   </div>

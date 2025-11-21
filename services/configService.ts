@@ -58,7 +58,9 @@ export const initConfigListener = (callback?: (config: AppConfig) => void) => {
 
   const unsubscribe = onSnapshot(doc(db, CONFIG_COLLECTION, CONFIG_DOC_ID), (docSnap) => {
     if (docSnap.exists()) {
-      currentConfig = { ...DEFAULT_CONFIG, ...docSnap.data() } as AppConfig;
+      const data = docSnap.data();
+      // Merge con default per evitare campi mancanti se la struttura cambia
+      currentConfig = { ...DEFAULT_CONFIG, ...data } as AppConfig;
       
       // Patch per schedule mancanti in vecchi dati
       if (currentConfig.locations) {
@@ -73,6 +75,9 @@ export const initConfigListener = (callback?: (config: AppConfig) => void) => {
       if (currentConfig.minBookingNoticeMinutes === undefined) {
         currentConfig.minBookingNoticeMinutes = 60;
       }
+      
+      // Patch per sports mancanti
+      if (!currentConfig.sports) currentConfig.sports = [];
 
     } else {
       // Se non esiste, crea il default su Firebase
@@ -98,7 +103,9 @@ export const getAppConfig = (): AppConfig => {
 
 export const saveAppConfig = async (config: AppConfig) => {
   try {
-    await setDoc(doc(db, CONFIG_COLLECTION, CONFIG_DOC_ID), config);
+    // Create a deep copy to ensure we're not passing references that might confuse Firestore SDK
+    const cleanConfig = JSON.parse(JSON.stringify(config));
+    await setDoc(doc(db, CONFIG_COLLECTION, CONFIG_DOC_ID), cleanConfig);
   } catch (e) {
     console.error("Errore salvataggio config:", e);
     alert("Errore nel salvataggio online. Verifica la connessione.");
@@ -128,19 +135,33 @@ export const updateLocationSchedule = (locationId: string, schedule: WeeklySched
   }
 }
 
-export const updateLocationDetails = (locationId: string, calendarId: string) => {
+export const updateLocationDetails = (locationId: string, updates: Partial<Location>) => {
     const config = getAppConfig();
     const locIndex = config.locations.findIndex(l => l.id === locationId);
     if (locIndex !== -1) {
-        config.locations[locIndex].googleCalendarId = calendarId;
+        config.locations[locIndex] = { ...config.locations[locIndex], ...updates };
         saveAppConfig(config);
     }
 }
 
+// --- SPORTS MANAGEMENT ---
+
 export const addSport = (sport: Sport) => {
   const config = getAppConfig();
+  // Ensure sports array exists
+  if (!config.sports) config.sports = [];
+  
   config.sports.push(sport);
   saveAppConfig(config);
+};
+
+export const updateSport = (sportId: string, updates: Partial<Sport>) => {
+    const config = getAppConfig();
+    const index = config.sports.findIndex(s => s.id === sportId);
+    if (index !== -1) {
+        config.sports[index] = { ...config.sports[index], ...updates };
+        saveAppConfig(config);
+    }
 };
 
 export const removeSport = (id: string) => {
@@ -149,8 +170,12 @@ export const removeSport = (id: string) => {
   saveAppConfig(config);
 };
 
+// --- LOCATION MANAGEMENT ---
+
 export const addLocation = (locationPartial: Pick<Location, 'id' | 'name' | 'address'>) => {
   const config = getAppConfig();
+  if (!config.locations) config.locations = [];
+
   const newLocation: Location = {
       ...locationPartial,
       schedule: JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)),
@@ -167,8 +192,12 @@ export const removeLocation = (id: string) => {
   saveAppConfig(config);
 };
 
+// --- DURATION MANAGEMENT ---
+
 export const addDuration = (duration: LessonDuration) => {
   const config = getAppConfig();
+  if (!config.durations) config.durations = [];
+
   if (!config.durations.some(d => d.minutes === duration.minutes)) {
     config.durations.push(duration);
     config.durations.sort((a, b) => a.minutes - b.minutes);
