@@ -6,13 +6,6 @@ export enum UserRole {
 
 // --- CONFIGURATION TYPES ---
 
-export interface Sport {
-  id: string;
-  name: string;
-  emoji: string; // Icona visiva
-  description: string;
-}
-
 export interface LessonDuration {
   minutes: number;
   label: string;
@@ -34,22 +27,43 @@ export interface WeeklySchedule {
   sunday: DailySchedule;
 }
 
-export interface Location {
+// Location is now nested inside Sport
+export interface SportLocation {
   id: string;
   name: string;
   address: string;
-  schedule: WeeklySchedule; // Orari specifici per sede
-  slotInterval: 30 | 60;    // Intervallo specifico per sede
-  googleCalendarId?: string; // ID del calendario esterno (es. Google Calendar)
+  googleCalendarId?: string; // ID del calendario specifico per questo sport in questa sede
+  schedule: WeeklySchedule; // Orari specifici per questa sede e sport
+  slotInterval: 30 | 60;
+}
+
+export interface LessonType {
+  id: string;
+  name: string; // es. "Lezione Singola", "Doppio", "Partita"
+  price?: number;
+}
+
+export interface Sport {
+  id: string;
+  name: string;
+  emoji: string; // Icona visiva
+  description: string;
+  // Nested Configuration
+  locations: SportLocation[];
+  lessonTypes: LessonType[];
+  durations: number[]; // Array of minutes allowed, e.g. [60, 90]
 }
 
 export interface AppConfig {
   homeTitle: string;
   homeSubtitle: string;
-  sports: Sport[];
-  locations: Location[];
-  durations: LessonDuration[];
+  sports: Sport[]; // All config is now here
   minBookingNoticeMinutes: number; // Tempo minimo di preavviso in minuti
+  importBusyCalendars?: string[]; // Lista ID calendari da cui importare impegni (Global busy check)
+  
+  // Deprecated global fields (kept for type safety during migration if needed, but unused in new logic)
+  locations?: any[]; 
+  durations?: any[];
 }
 
 // --- BOOKING TYPES ---
@@ -65,16 +79,23 @@ export interface Booking {
   id: string;
   sportId: string;
   sportName: string;
+  
   locationId: string;
   locationName: string;
+  
+  lessonTypeId?: string;
+  lessonTypeName?: string; // "Singola", "Doppia"
+  
   durationMinutes: number;
   date: string; // YYYY-MM-DD
   timeSlotId: string;
   startTime: string;
+  
   customerName: string;
   customerEmail: string;
   skillLevel: 'Beginner' | 'Intermediate' | 'Advanced';
   notes?: string;
+  
   aiLessonPlan?: string;
   targetCalendarId?: string; // ID del calendario dove è stata salvata la prenotazione
   googleEventId?: string; // ID dell'evento creato su Google Calendar (se sincronizzato)
@@ -94,4 +115,5 @@ export interface LessonPlanRequest {
   skillLevel: string;
   durationMinutes: number;
   focusArea?: string;
+  lessonType?: string;
 }

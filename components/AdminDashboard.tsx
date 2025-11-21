@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { CalendarEvent, AppConfig, WeeklySchedule, Location, Sport } from '../types';
-import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase, exportBookingsToGoogle, getBookings } from '../services/calendarService';
-import { getAppConfig, addSport, updateSport, removeSport, addLocation, updateLocationDetails, removeLocation, addDuration, removeDuration, updateHomeConfig, updateLocationSchedule, updateMinBookingNotice, initConfigListener } from '../services/configService';
+import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport, LessonType } from '../types';
+import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase, exportBookingsToGoogle, getBookings, listGoogleCalendars } from '../services/calendarService';
+import { getAppConfig, addSport, updateSport, removeSport, addSportLocation, updateSportLocation, removeSportLocation, addSportLessonType, removeSportLessonType, addSportDuration, removeSportDuration, updateHomeConfig, updateMinBookingNotice, initConfigListener, updateImportBusyCalendars } from '../services/configService';
 import { logout } from '../services/authService';
 import Button from './Button';
 
@@ -20,28 +20,35 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [config, setConfig] = useState<AppConfig>(getAppConfig());
   const [publicLinkCopied, setPublicLinkCopied] = useState(false);
 
-  // --- EDITING STATES ---
+  // Calendar State
+  const [userCalendars, setUserCalendars] = useState<{id: string, summary: string, primary?: boolean}[]>([]);
+  const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
+  const [loadingCalendars, setLoadingCalendars] = useState(false);
+
+  // --- NEW STATE FOR NESTED CONFIG ---
+  const [expandedSportId, setExpandedSportId] = useState<string | null>(null);
+  
+  // Temp forms for adding nested items
+  const [newSportName, setNewSportName] = useState('');
+  const [newLocName, setNewLocName] = useState('');
+  const [newLocAddr, setNewLocAddr] = useState('');
+  const [newLessonType, setNewLessonType] = useState('');
+  const [newDuration, setNewDuration] = useState('60');
+
+  // Editing Sport Meta
   const [editingSportId, setEditingSportId] = useState<string | null>(null);
   const [tempSport, setTempSport] = useState<Partial<Sport>>({});
-
-  const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
-  const [tempLocation, setTempLocation] = useState<Partial<Location>>({});
-
-  // Config Forms
-  const [newSportName, setNewSportName] = useState('');
-  const [newLocationName, setNewLocationName] = useState('');
-  const [newLocationAddr, setNewLocationAddr] = useState('');
-  const [newDuration, setNewDuration] = useState('60');
-  const [noticeHours, setNoticeHours] = useState<number>(0);
 
   // Home Config Form
   const [homeTitle, setHomeTitle] = useState('');
   const [homeSubtitle, setHomeSubtitle] = useState('');
+  const [noticeHours, setNoticeHours] = useState<number>(0);
 
   // Schedule Config State
-  const [selectedLocationId, setSelectedLocationId] = useState<string>('');
-  const [schedule, setSchedule] = useState<WeeklySchedule | null>(null);
-  const [slotInterval, setSlotInterval] = useState<30 | 60>(60);
+  const [selectedScheduleSportId, setSelectedScheduleSportId] = useState<string>('');
+  const [selectedScheduleLocId, setSelectedScheduleLocId] = useState<string>('');
+  const [editingSchedule, setEditingSchedule] = useState<WeeklySchedule | null>(null);
+  const [editingSlotInterval, setEditingSlotInterval] = useState<30 | 60>(60);
 
   useEffect(() => {
     initGoogleClient();
@@ -51,6 +58,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         setHomeTitle(newConfig.homeTitle);
         setHomeSubtitle(newConfig.homeSubtitle);
         setNoticeHours((newConfig.minBookingNoticeMinutes || 0) / 60);
+        if (newConfig.importBusyCalendars) {
+            setSelectedCalendarIds(newConfig.importBusyCalendars);
+        }
     });
 
     refreshEvents();
@@ -59,25 +69,52 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   }, []);
 
   useEffect(() => {
-      if (config.locations.length > 0 && !selectedLocationId) {
-          setSelectedLocationId(config.locations[0].id);
+      if (isConnected) {
+          fetchUserCalendars();
       }
-  }, [config.locations, selectedLocationId]);
+  }, [isConnected]);
 
+  // Auto-select first sport/location for schedule tab
   useEffect(() => {
-      if (selectedLocationId) {
-          const loc = config.locations.find(l => l.id === selectedLocationId);
-          if (loc) {
-              setSchedule(loc.schedule);
-              setSlotInterval(loc.slotInterval);
+      if (config.sports.length > 0 && !selectedScheduleSportId) {
+          const firstSport = config.sports[0];
+          setSelectedScheduleSportId(firstSport.id);
+          if (firstSport.locations.length > 0) {
+              setSelectedScheduleLocId(firstSport.locations[0].id);
           }
       }
-  }, [selectedLocationId, config.locations]);
+  }, [config.sports, selectedScheduleSportId]);
+
+  // Load schedule when selection changes
+  useEffect(() => {
+      if (selectedScheduleSportId && selectedScheduleLocId) {
+          const sport = config.sports.find(s => s.id === selectedScheduleSportId);
+          const loc = sport?.locations.find(l => l.id === selectedScheduleLocId);
+          if (loc) {
+              setEditingSchedule(loc.schedule);
+              setEditingSlotInterval(loc.slotInterval);
+          } else {
+              setEditingSchedule(null);
+          }
+      }
+  }, [selectedScheduleSportId, selectedScheduleLocId, config.sports]);
 
   const refreshEvents = () => {
     setEvents(getAllCalendarEvents());
     setIsConnected(isCalendarConnected());
   };
+
+  const fetchUserCalendars = async () => {
+      setLoadingCalendars(true);
+      try {
+          const cals = await listGoogleCalendars();
+          setUserCalendars(cals);
+      } catch (e) {
+          console.error("Could not list calendars", e);
+      } finally {
+          setLoadingCalendars(false);
+      }
+  }
 
   const handleConnectCalendar = async () => {
     setIsConnecting(true);
@@ -85,11 +122,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         await connectGoogleCalendar();
         setIsConnected(true);
     } catch (e: any) {
-        console.error("Google Auth Error:", e);
         if (e && e.error === 'access_denied') {
-            alert("ACCESSO NEGATO DA GOOGLE:\n\nL'app è in modalità 'Testing'. Devi aggiungere la tua email (@gmail.com) alla lista 'Test users' nella Google Cloud Console (sezione 'OAuth consent screen') per poter accedere.");
+            alert("ACCESSO NEGATO: Aggiungi la tua email ai Test Users in Google Cloud Console.");
         } else {
-            alert("Errore connessione Google Calendar. Controlla la console per i dettagli.");
+            alert("Errore connessione Google Calendar.");
         }
     } finally {
         setIsConnecting(false);
@@ -103,16 +139,25 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     refreshEvents();
   };
 
+  const handleToggleCalendar = (calId: string) => {
+      const newSelection = selectedCalendarIds.includes(calId)
+        ? selectedCalendarIds.filter(id => id !== calId)
+        : [...selectedCalendarIds, calId];
+      
+      setSelectedCalendarIds(newSelection);
+      updateImportBusyCalendars(newSelection);
+  };
+
   const handleSyncNow = async () => {
       if (!isConnected) return;
       setIsSyncing(true);
       try {
-          const calendarId = config.locations[0]?.googleCalendarId || 'primary';
-          const count = await syncGoogleEventsToFirebase(calendarId);
-          alert(`Sincronizzazione da Google completata! ${count} eventi importati.`);
+          const calendarsToSync = config.importBusyCalendars || selectedCalendarIds;
+          const count = await syncGoogleEventsToFirebase(calendarsToSync);
+          alert(`Sincronizzazione completata! ${count} impegni importati.`);
           refreshEvents();
       } catch (e) {
-          alert("Errore durante la sincronizzazione. Assicurati di essere loggato.");
+          alert("Errore durante la sincronizzazione.");
       } finally {
           setIsSyncing(false);
       }
@@ -123,30 +168,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       setIsExporting(true);
       try {
           const count = await exportBookingsToGoogle('primary');
-          if (count > 0) {
-              alert(`Successo! ${count} nuove prenotazioni esportate sul tuo Google Calendar.`);
-          } else {
-              alert("Nessuna nuova prenotazione da esportare (tutte già sincronizzate).");
-          }
+          alert(`Successo! ${count} nuove prenotazioni esportate.`);
           refreshEvents();
       } catch (e) {
-          console.error(e);
-          alert("Errore durante l'esportazione. Verifica la connessione.");
+          alert("Errore durante l'esportazione.");
       } finally {
           setIsExporting(false);
       }
   }
 
   // --- SPORT ACTIONS ---
-  const handleAddSport = (e: React.MouseEvent) => {
-      e.preventDefault();
+  const handleAddSport = () => {
       if(!newSportName) return;
-      addSport({ 
-          id: Date.now().toString(), 
-          name: newSportName, 
-          emoji: '', 
-          description: 'Nuova attività' 
-      });
+      addSport(newSportName);
       setNewSportName('');
   };
 
@@ -162,82 +196,67 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       }
   };
 
-  // --- LOCATION ACTIONS ---
-  const handleAddLocation = (e: React.MouseEvent) => {
-      e.preventDefault();
-      if(!newLocationName) return;
-      addLocation({ id: Date.now().toString(), name: newLocationName, address: newLocationAddr });
-      setNewLocationName('');
-      setNewLocationAddr('');
-  };
+  // --- NESTED ACTIONS ---
+  const handleAddLocation = (sportId: string) => {
+      if(!newLocName) return;
+      addSportLocation(sportId, newLocName, newLocAddr);
+      setNewLocName('');
+      setNewLocAddr('');
+  }
 
-  const startEditLocation = (loc: Location) => {
-      setEditingLocationId(loc.id);
-      setTempLocation({...loc});
-  };
+  const handleUpdateLocation = (sportId: string, locId: string, updates: Partial<SportLocation>) => {
+      updateSportLocation(sportId, locId, updates);
+  }
 
-  const saveEditLocation = () => {
-      if (editingLocationId && tempLocation.name) {
-          updateLocationDetails(editingLocationId, tempLocation);
-          setEditingLocationId(null);
-      }
-  };
+  const handleAddLessonType = (sportId: string) => {
+      if(!newLessonType) return;
+      addSportLessonType(sportId, newLessonType);
+      setNewLessonType('');
+  }
 
-  const handleAddDuration = (e: React.MouseEvent) => {
-      e.preventDefault();
+  const handleAddDuration = (sportId: string) => {
       const mins = parseInt(newDuration);
       if(mins > 0) {
-          addDuration({ minutes: mins, label: `${mins} Minuti` });
+        addSportDuration(sportId, mins);
       }
-  };
-
-  const handleUpdateHome = () => {
-      updateHomeConfig(homeTitle, homeSubtitle);
-      alert('Home aggiornata con successo!');
   }
 
-  const handleUpdateNotice = () => {
-      updateMinBookingNotice(noticeHours * 60);
-      alert('Preavviso minimo aggiornato!');
-  }
-
+  // --- SCHEDULE ACTIONS ---
   const handleSaveSchedule = () => {
-      if (!selectedLocationId || !schedule) return;
-      updateLocationSchedule(selectedLocationId, schedule, slotInterval);
-      alert('Orari aggiornati per la sede selezionata!');
+      if (!selectedScheduleSportId || !selectedScheduleLocId || !editingSchedule) return;
+      // We need a way to update schedule specifically. 
+      // We can reuse updateSportLocation for this since schedule is part of location
+      updateSportLocation(selectedScheduleSportId, selectedScheduleLocId, {
+          schedule: editingSchedule,
+          slotInterval: editingSlotInterval
+      });
+      alert('Orari aggiornati!');
   }
 
   const handleScheduleChange = (day: keyof WeeklySchedule, field: 'start' | 'end' | 'isOpen', value: any) => {
-      if (!schedule) return;
-      setSchedule(prev => {
+      if (!editingSchedule) return;
+      setEditingSchedule(prev => {
           if (!prev) return null;
           return {
             ...prev,
-            [day]: {
-                ...prev[day],
-                [field]: value
-            }
+            [day]: { ...prev[day], [field]: value }
           };
       });
   };
 
-  const handleResetConfig = () => {
-      if(confirm("Sei sicuro? Questo ripristinerà tutto alle impostazioni iniziali.")) {
-        localStorage.removeItem('courtmaster_config_v3');
-        window.location.reload();
-      }
-  };
+  const handleUpdateHome = () => {
+      updateHomeConfig(homeTitle, homeSubtitle);
+      alert('Home aggiornata!');
+  }
+
+  const handleUpdateNotice = () => {
+      updateMinBookingNotice(noticeHours * 60);
+      alert('Preavviso aggiornato!');
+  }
 
   const handleLogout = () => {
       logout();
       onLogout();
-  };
-
-  const handleCopyLink = () => {
-      const url = window.location.origin; 
-      navigator.clipboard.writeText(url);
-      setPublicLinkCopied(true);
-      setTimeout(() => setPublicLinkCopied(false), 2000);
   };
 
   const dayLabels: Record<string, string> = {
@@ -256,455 +275,292 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </div>
         <div className="flex flex-wrap items-center gap-2">
             <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700">
-                <button 
-                    onClick={() => setActiveTab('calendar')}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'calendar' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-                >
-                    Calendario
-                </button>
-                <button 
-                    onClick={() => setActiveTab('schedule')}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'schedule' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-                >
-                    Orari
-                </button>
-                <button 
-                    onClick={() => setActiveTab('config')}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'config' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-                >
-                    Offerta
-                </button>
-                 <button 
-                    onClick={() => setActiveTab('home')}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'home' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-                >
-                    Home
-                </button>
+                <button onClick={() => setActiveTab('calendar')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'calendar' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Calendario</button>
+                <button onClick={() => setActiveTab('config')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'config' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Offerta</button>
+                <button onClick={() => setActiveTab('schedule')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'schedule' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Orari</button>
+                <button onClick={() => setActiveTab('home')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'home' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Home</button>
             </div>
-            <Button variant="outline" onClick={handleLogout} className="ml-2 border-red-900/50 text-red-400 hover:bg-red-900/20 hover:border-red-500/50">
-                Esci
-            </Button>
+            <Button variant="outline" onClick={handleLogout} className="ml-2 border-red-900/50 text-red-400 hover:bg-red-900/20 hover:border-red-500/50">Esci</Button>
         </div>
       </div>
 
-      {/* Share Link Box */}
-      <div className="mb-8 bg-gradient-to-r from-indigo-900/20 to-violet-900/20 border border-indigo-500/30 rounded-xl p-5 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-              <div className="bg-indigo-500/20 p-3 rounded-full text-indigo-400">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg>
-              </div>
-              <div>
-                  <h3 className="font-bold text-white">Il tuo Link Pubblico</h3>
-                  <p className="text-xs text-slate-400">I clienti usano questo link per prenotare.</p>
-              </div>
-          </div>
-          <div className="flex items-center gap-2 w-full md:w-auto bg-slate-900 px-4 py-2 rounded-lg border border-slate-700">
-              <code className="text-sm text-slate-300 truncate max-w-[200px] md:max-w-xs">{window.location.origin}</code>
-              <button onClick={handleCopyLink} className="text-xs font-bold text-indigo-400 hover:text-indigo-300 uppercase ml-2 tracking-wider">
-                  {publicLinkCopied ? 'Copiato!' : 'Copia'}
-              </button>
-          </div>
-      </div>
-
-      {/* TAB: CALENDAR */}
+      {/* TAB: CALENDAR (Semplificato) */}
       {activeTab === 'calendar' && (
           <div className="space-y-8 animate-in fade-in">
-            <div className={`p-6 rounded-xl border ${isConnected ? 'bg-emerald-900/10 border-emerald-500/30' : 'bg-slate-800 border-slate-700'}`}>
-                <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+             <div className={`p-6 rounded-xl border ${isConnected ? 'bg-emerald-900/10 border-emerald-500/30' : 'bg-slate-800 border-slate-700'}`}>
+                <div className="flex justify-between items-center">
                     <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 rounded-full flex items-center justify-center ${isConnected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-500'}`}>
-                            <svg className="w-6 h-6" viewBox="0 0 24 24"><path fill="currentColor" d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2zm-7 5h5v5h-5v-5z"/></svg>
-                        </div>
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center ${isConnected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-500'}`}>📅</div>
                         <div>
                             <h3 className="font-bold text-lg text-white">Google Calendar</h3>
-                            <p className="text-sm text-slate-400">
-                                {isConnected 
-                                    ? "Connesso e operativo." 
-                                    : "Connetti per abilitare la sincronizzazione."}
-                            </p>
+                            <p className="text-sm text-slate-400">{isConnected ? "Connesso" : "Disconnesso"}</p>
                         </div>
                     </div>
-                    <div className="flex flex-wrap gap-2 justify-center md:justify-end">
-                        {!isConnected ? (
-                             <Button onClick={handleConnectCalendar} isLoading={isConnecting} variant="outline">
-                                 Connetti Account Google
-                             </Button>
-                        ) : (
-                            <>
-                             <Button onClick={handleSyncNow} isLoading={isSyncing} variant="secondary" className="text-sm">
-                                 1. Scarica Impegni
-                             </Button>
-                             <Button onClick={handleExportToGoogle} isLoading={isExporting} variant="primary" className="text-sm">
-                                 2. Esporta Prenotazioni
-                             </Button>
-                             <Button onClick={handleDisconnect} variant="ghost" className="text-red-400 hover:bg-red-900/20">
-                                 Disconnetti
-                             </Button>
-                            </>
-                        )}
-                    </div>
+                    {!isConnected ? (
+                        <Button onClick={handleConnectCalendar} isLoading={isConnecting}>Connetti</Button>
+                    ) : (
+                        <div className="flex gap-2">
+                             <Button onClick={handleSyncNow} isLoading={isSyncing} variant="secondary">Scarica Impegni</Button>
+                             <Button onClick={handleExportToGoogle} isLoading={isExporting} variant="primary">Esporta Nuovi</Button>
+                        </div>
+                    )}
                 </div>
-            </div>
-
-            {isConnected && (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    <div className="lg:col-span-2 bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
-                        <div className="px-6 py-4 bg-slate-800 border-b border-slate-700 font-semibold text-slate-200 flex justify-between items-center">
-                            <span>Prossimi Eventi</span>
-                        </div>
-                        {events.length === 0 ? (
-                             <div className="p-8 text-center text-slate-500">Nessun evento in programma.</div>
-                        ) : (
-                            <ul className="divide-y divide-slate-700 max-h-[400px] overflow-y-auto">
-                                {events.map(ev => (
-                                    <li key={ev.id} className="p-4 flex items-center gap-4 hover:bg-slate-800/50 transition-colors">
-                                        <div className={`w-1 h-10 rounded-full ${ev.type === 'APP_BOOKING' ? 'bg-indigo-500' : 'bg-emerald-500'}`}></div>
-                                        <div className="flex-1">
-                                            <div className="flex justify-between items-start">
-                                                <div className="font-bold text-slate-200">{ev.title}</div>
-                                                {ev.type === 'APP_BOOKING' && (
-                                                     <span className="text-[10px] bg-slate-700 px-1 rounded text-slate-400">
-                                                        {getBookings().find(b => b.id === ev.id)?.googleEventId ? '✓ Su Google' : 'In attesa Export'}
-                                                     </span>
-                                                )}
-                                            </div>
-                                            <div className="text-xs text-slate-500">
-                                                {new Date(ev.start).toLocaleString('it-IT')}
-                                            </div>
-                                        </div>
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
-                    </div>
-
-                    <div className="bg-slate-900/50 border border-slate-700 rounded-xl p-6">
-                        <h3 className="font-bold text-slate-300 mb-2">Stato Sincronizzazione</h3>
-                        <div className="text-sm text-slate-400 space-y-2">
-                            <p>Assicurati di cliccare "Scarica Impegni" per bloccare gli slot occupati sul tuo calendario.</p>
-                            <p>Clicca "Esporta" per inviare le nuove lezioni al tuo Google Calendar.</p>
-                        </div>
-                    </div>
-                </div>
-            )}
+             </div>
+             
+             {isConnected && (
+                 <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+                     <h3 className="font-bold text-white mb-4">Calendari "Occupati" (Import)</h3>
+                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-h-40 overflow-y-auto">
+                        {userCalendars.map(cal => (
+                            <label key={cal.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${selectedCalendarIds.includes(cal.id) ? 'bg-indigo-900/20 border-indigo-500/50' : 'bg-slate-900 border-slate-700 hover:border-slate-600'}`}>
+                                <input 
+                                type="checkbox" 
+                                checked={selectedCalendarIds.includes(cal.id)}
+                                onChange={() => handleToggleCalendar(cal.id)}
+                                className="rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-800"
+                                />
+                                <div className="overflow-hidden">
+                                    <div className="font-medium text-sm text-white truncate">{cal.summary}</div>
+                                </div>
+                            </label>
+                        ))}
+                     </div>
+                 </div>
+             )}
           </div>
       )}
 
-      {/* TAB: SCHEDULE */}
+      {/* TAB: CONFIG (SPORTS & NESTED) */}
+      {activeTab === 'config' && (
+        <div className="animate-in fade-in space-y-8">
+             
+             {/* Global Settings */}
+             <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6 flex items-center justify-between gap-4">
+                <div>
+                    <h3 className="font-bold text-white">Regole Globali</h3>
+                    <p className="text-sm text-slate-400">Preavviso minimo prenotazione (ore)</p>
+                </div>
+                <div className="flex items-center gap-2">
+                    <input 
+                        type="number" 
+                        className="w-20 p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-center"
+                        value={noticeHours} 
+                        onChange={e => setNoticeHours(Number(e.target.value))} 
+                    />
+                    <Button onClick={handleUpdateNotice} className="text-xs">Salva</Button>
+                </div>
+             </div>
+
+             {/* Sports List */}
+             <div className="space-y-4">
+                 <h3 className="text-xl font-bold text-white">Configurazione Sport</h3>
+                 
+                 {config.sports.map(sport => (
+                     <div key={sport.id} className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+                         {/* Sport Header */}
+                         <div className="p-4 bg-slate-800 flex items-center justify-between cursor-pointer hover:bg-slate-750" onClick={() => setExpandedSportId(expandedSportId === sport.id ? null : sport.id)}>
+                             <div className="flex items-center gap-4">
+                                 <div className="text-2xl">{sport.emoji}</div>
+                                 {editingSportId === sport.id ? (
+                                     <input 
+                                        className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white"
+                                        value={tempSport.name}
+                                        onClick={e => e.stopPropagation()}
+                                        onChange={e => setTempSport({...tempSport, name: e.target.value})}
+                                     />
+                                 ) : (
+                                     <h4 className="text-lg font-bold text-white">{sport.name}</h4>
+                                 )}
+                             </div>
+                             <div className="flex items-center gap-2">
+                                 {editingSportId === sport.id ? (
+                                     <Button onClick={(e) => { e.stopPropagation(); saveEditSport(); }} className="text-xs py-1">Salva</Button>
+                                 ) : (
+                                    <button onClick={(e) => { e.stopPropagation(); startEditSport(sport); }} className="text-xs text-slate-400 hover:text-white">Modifica Nome</button>
+                                 )}
+                                 <button onClick={(e) => { e.stopPropagation(); removeSport(sport.id); }} className="text-xs text-red-400 hover:text-red-300 ml-2">Elimina</button>
+                                 <div className={`transform transition-transform ${expandedSportId === sport.id ? 'rotate-180' : ''}`}>▼</div>
+                             </div>
+                         </div>
+
+                         {/* Nested Configuration Body */}
+                         {expandedSportId === sport.id && (
+                             <div className="p-6 bg-slate-900/50 border-t border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-6">
+                                 
+                                 {/* Col 1: Locations */}
+                                 <div className="space-y-3">
+                                     <h5 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">Sedi & Calendari</h5>
+                                     {sport.locations.map(loc => (
+                                         <div key={loc.id} className="bg-slate-800 p-3 rounded border border-slate-700 text-sm">
+                                             <div className="font-bold text-white flex justify-between">
+                                                 {loc.name}
+                                                 <button onClick={() => removeSportLocation(sport.id, loc.id)} className="text-red-400 hover:text-white">×</button>
+                                             </div>
+                                             <div className="text-slate-500 text-xs mb-2">{loc.address}</div>
+                                             
+                                             <select 
+                                                className="w-full bg-slate-900 border border-slate-600 rounded text-xs text-slate-300 p-1"
+                                                value={loc.googleCalendarId || ''}
+                                                onChange={(e) => handleUpdateLocation(sport.id, loc.id, { googleCalendarId: e.target.value })}
+                                             >
+                                                 <option value="">-- Calendario Default --</option>
+                                                 {userCalendars.map(c => (
+                                                     <option key={c.id} value={c.id}>{c.summary}</option>
+                                                 ))}
+                                             </select>
+                                         </div>
+                                     ))}
+                                     <div className="bg-slate-800/50 p-2 rounded border border-slate-700/50 space-y-2">
+                                         <input placeholder="Nome Sede" className="w-full bg-transparent border-b border-slate-600 text-xs p-1 text-white" value={newLocName} onChange={e => setNewLocName(e.target.value)} />
+                                         <input placeholder="Indirizzo" className="w-full bg-transparent border-b border-slate-600 text-xs p-1 text-white" value={newLocAddr} onChange={e => setNewLocAddr(e.target.value)} />
+                                         <button onClick={() => handleAddLocation(sport.id)} className="w-full bg-slate-700 hover:bg-slate-600 text-xs text-white py-1 rounded">Aggiungi Sede</button>
+                                     </div>
+                                 </div>
+
+                                 {/* Col 2: Lesson Types */}
+                                 <div className="space-y-3">
+                                     <h5 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">Tipi Lezione</h5>
+                                     {sport.lessonTypes.map(lt => (
+                                         <div key={lt.id} className="bg-slate-800 p-2 rounded border border-slate-700 flex justify-between items-center text-sm text-white">
+                                             {lt.name}
+                                             <button onClick={() => removeSportLessonType(sport.id, lt.id)} className="text-red-400 hover:text-white">×</button>
+                                         </div>
+                                     ))}
+                                     <div className="flex gap-2">
+                                         <input placeholder="Es. Singola" className="flex-1 bg-slate-800 border border-slate-600 text-xs p-1 rounded text-white" value={newLessonType} onChange={e => setNewLessonType(e.target.value)} />
+                                         <button onClick={() => handleAddLessonType(sport.id)} className="bg-slate-700 hover:bg-slate-600 text-xs text-white px-2 rounded">+</button>
+                                     </div>
+                                 </div>
+
+                                 {/* Col 3: Durations */}
+                                 <div className="space-y-3">
+                                     <h5 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">Durate (min)</h5>
+                                     <div className="flex flex-wrap gap-2">
+                                         {sport.durations.map(d => (
+                                             <div key={d} className="bg-slate-800 px-2 py-1 rounded border border-slate-700 flex items-center gap-2 text-sm text-white">
+                                                 {d}m
+                                                 <button onClick={() => removeSportDuration(sport.id, d)} className="text-slate-500 hover:text-red-400">×</button>
+                                             </div>
+                                         ))}
+                                     </div>
+                                     <div className="flex gap-2">
+                                         <input type="number" placeholder="60" className="w-16 bg-slate-800 border border-slate-600 text-xs p-1 rounded text-white" value={newDuration} onChange={e => setNewDuration(e.target.value)} />
+                                         <button onClick={() => handleAddDuration(sport.id)} className="bg-slate-700 hover:bg-slate-600 text-xs text-white px-2 rounded">+</button>
+                                     </div>
+                                 </div>
+                             </div>
+                         )}
+                     </div>
+                 ))}
+
+                 {/* Add Sport */}
+                 <div className="flex gap-2 max-w-md mt-6">
+                     <input 
+                        className="flex-1 p-2 bg-slate-900 border border-slate-600 rounded-lg text-white"
+                        placeholder="Nuovo Sport (es. Pickleball)"
+                        value={newSportName}
+                        onChange={e => setNewSportName(e.target.value)}
+                     />
+                     <Button onClick={handleAddSport}>Aggiungi Sport</Button>
+                 </div>
+             </div>
+        </div>
+      )}
+
+      {/* TAB: SCHEDULE (Now Location Specific) */}
       {activeTab === 'schedule' && (
-          <div className="animate-in fade-in max-w-4xl mx-auto">
-               <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden mb-6">
+          <div className="max-w-4xl mx-auto animate-in fade-in">
+               <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
                    <div className="p-6 border-b border-slate-700 bg-slate-800/80 flex flex-col md:flex-row justify-between items-center gap-4">
                        <div>
-                           <h2 className="text-xl font-bold text-white">Orari Sedi</h2>
-                           <p className="text-sm text-slate-400">Seleziona una sede per modificare i suoi orari.</p>
+                           <h2 className="text-xl font-bold text-white">Orari Apertura</h2>
+                           <p className="text-sm text-slate-400">Configura orari per sport e sede.</p>
                        </div>
-
-                        <select 
-                            className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm min-w-[200px]"
-                            value={selectedLocationId}
-                            onChange={(e) => setSelectedLocationId(e.target.value)}
-                        >
-                            {config.locations.map(loc => (
-                                <option key={loc.id} value={loc.id}>{loc.name}</option>
-                            ))}
-                        </select>
+                        
+                       <div className="flex gap-2">
+                           <select 
+                                className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
+                                value={selectedScheduleSportId}
+                                onChange={(e) => setSelectedScheduleSportId(e.target.value)}
+                            >
+                                {config.sports.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                            <select 
+                                className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
+                                value={selectedScheduleLocId}
+                                onChange={(e) => setSelectedScheduleLocId(e.target.value)}
+                            >
+                                {config.sports.find(s => s.id === selectedScheduleSportId)?.locations.map(l => (
+                                    <option key={l.id} value={l.id}>{l.name}</option>
+                                ))}
+                            </select>
+                       </div>
                    </div>
 
-                   {schedule && (
+                   {editingSchedule ? (
                     <>
                         <div className="p-6 bg-slate-800/30 border-b border-slate-700 flex justify-between items-center">
                             <span className="text-sm text-slate-300 font-medium">Intervallo Slot</span>
                             <div className="flex items-center gap-3 bg-slate-900 p-2 rounded-lg border border-slate-700">
-                                <button 
-                                    onClick={() => setSlotInterval(60)}
-                                    className={`px-3 py-1 rounded text-xs font-bold transition-all ${slotInterval === 60 ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-white'}`}
-                                >
-                                    60 min
-                                </button>
-                                <button 
-                                    onClick={() => setSlotInterval(30)}
-                                    className={`px-3 py-1 rounded text-xs font-bold transition-all ${slotInterval === 30 ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-white'}`}
-                                >
-                                    30 min
-                                </button>
+                                <button onClick={() => setEditingSlotInterval(60)} className={`px-3 py-1 rounded text-xs font-bold transition-all ${editingSlotInterval === 60 ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>60m</button>
+                                <button onClick={() => setEditingSlotInterval(30)} className={`px-3 py-1 rounded text-xs font-bold transition-all ${editingSlotInterval === 30 ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>30m</button>
                             </div>
                         </div>
 
                         <div className="p-6 space-y-1">
-                            {Object.keys(schedule).map((dayKey) => {
+                            {Object.keys(editingSchedule).map((dayKey) => {
                                 const day = dayKey as keyof WeeklySchedule;
-                                const dayData = schedule[day];
+                                const dayData = editingSchedule[day];
                                 return (
                                     <div key={day} className={`grid grid-cols-12 items-center gap-4 p-3 rounded-lg border transition-all ${dayData.isOpen ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-900/30 border-transparent opacity-60'}`}>
                                         <div className="col-span-3 font-medium text-slate-200 capitalize flex items-center gap-2">
-                                            <input 
-                                                type="checkbox" 
-                                                checked={dayData.isOpen} 
-                                                onChange={(e) => handleScheduleChange(day, 'isOpen', e.target.checked)}
-                                                className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
-                                            />
+                                            <input type="checkbox" checked={dayData.isOpen} onChange={(e) => handleScheduleChange(day, 'isOpen', e.target.checked)} className="w-4 h-4 rounded bg-slate-700 border-slate-600" />
                                             {dayLabels[day]}
                                         </div>
-                                        
                                         {dayData.isOpen ? (
                                             <>
                                                 <div className="col-span-4 flex items-center gap-2">
-                                                    <span className="text-xs text-slate-500">Dalle:</span>
-                                                    <input 
-                                                        type="time" 
-                                                        value={dayData.start} 
-                                                        onChange={(e) => handleScheduleChange(day, 'start', e.target.value)}
-                                                        className="bg-slate-900 border border-slate-600 text-white text-sm rounded px-2 py-1 outline-none focus:border-indigo-500"
-                                                    />
+                                                    <input type="time" value={dayData.start} onChange={(e) => handleScheduleChange(day, 'start', e.target.value)} className="bg-slate-900 border border-slate-600 text-white text-sm rounded px-2 py-1" />
                                                 </div>
                                                 <div className="col-span-4 flex items-center gap-2">
-                                                    <span className="text-xs text-slate-500">Alle:</span>
-                                                    <input 
-                                                        type="time" 
-                                                        value={dayData.end} 
-                                                        onChange={(e) => handleScheduleChange(day, 'end', e.target.value)}
-                                                        className="bg-slate-900 border border-slate-600 text-white text-sm rounded px-2 py-1 outline-none focus:border-indigo-500"
-                                                    />
+                                                    <input type="time" value={dayData.end} onChange={(e) => handleScheduleChange(day, 'end', e.target.value)} className="bg-slate-900 border border-slate-600 text-white text-sm rounded px-2 py-1" />
                                                 </div>
                                             </>
-                                        ) : (
-                                            <div className="col-span-8 text-xs text-slate-600 italic">Chiuso</div>
-                                        )}
+                                        ) : <div className="col-span-8 text-xs text-slate-600 italic">Chiuso</div>}
                                     </div>
                                 );
                             })}
                         </div>
-                        
                         <div className="p-6 bg-slate-800/50 border-t border-slate-700 flex justify-end">
                             <Button onClick={handleSaveSchedule}>Salva Orari</Button>
                         </div>
                     </>
+                   ) : (
+                       <div className="p-10 text-center text-slate-500">Seleziona uno sport e una sede che abbiano orari configurati.</div>
                    )}
                </div>
           </div>
       )}
 
-      {/* TAB: CONFIG (SPORTS & LOCATIONS) */}
-      {activeTab === 'config' && (
-        <div className="animate-in fade-in space-y-8">
-            
-             {/* Booking Rules */}
-             <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6">
-                <h3 className="text-lg font-bold text-white mb-2">Regole Prenotazione</h3>
-                <p className="text-sm text-slate-400 mb-4">Imposta le restrizioni per i clienti.</p>
-                <div className="flex items-end gap-4">
-                    <div className="flex-1">
-                         <label className="text-xs text-slate-400 uppercase font-bold mb-1 block">Preavviso Minimo (Ore)</label>
-                         <input 
-                             type="number" 
-                             className="w-full p-3 bg-slate-900 border border-slate-600 rounded-lg text-white"
-                             value={noticeHours} 
-                             onChange={e => setNoticeHours(Number(e.target.value))} 
-                         />
-                         <p className="text-xs text-slate-500 mt-1">Esempio: Se imposti 5 ore, alle 10:00 saranno prenotabili solo slot dopo le 15:00.</p>
-                    </div>
-                    <Button onClick={handleUpdateNotice}>Salva Regola</Button>
-                </div>
-             </div>
-
-            {/* Sports Management */}
-            <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6">
-                <h3 className="text-lg font-bold text-white mb-2">Sport</h3>
-                <p className="text-sm text-slate-400 mb-6">Gestisci le attività prenotabili. Clicca Modifica per cambiare nome o descrizione.</p>
-                
-                <div className="space-y-3 mb-6">
-                    {config.sports.map(sport => (
-                        <div key={sport.id} className="bg-slate-900/50 p-4 rounded-lg border border-slate-700 flex items-center justify-between gap-4">
-                            {editingSportId === sport.id ? (
-                                <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <input 
-                                        className="p-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
-                                        value={tempSport.name || ''} 
-                                        onChange={e => setTempSport({...tempSport, name: e.target.value})} 
-                                        placeholder="Nome Sport"
-                                    />
-                                    <input 
-                                        className="p-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
-                                        value={tempSport.description || ''} 
-                                        onChange={e => setTempSport({...tempSport, description: e.target.value})} 
-                                        placeholder="Descrizione breve"
-                                    />
-                                    <div className="flex gap-2 md:col-span-2 justify-end">
-                                        <Button onClick={saveEditSport} className="text-xs py-1 px-3">Salva</Button>
-                                        <button onClick={() => setEditingSportId(null)} className="text-slate-400 text-xs hover:text-white">Annulla</button>
-                                    </div>
-                                </div>
-                            ) : (
-                                <>
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500/20 to-violet-500/20 border border-indigo-500/30 flex items-center justify-center">
-                                           <div className="w-3 h-3 bg-indigo-500 rounded-full"></div>
-                                        </div>
-                                        <div>
-                                            <div className="font-bold text-white text-lg">{sport.name}</div>
-                                            <div className="text-sm text-slate-400">{sport.description}</div>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <button onClick={() => startEditSport(sport)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors">
-                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
-                                        </button>
-                                        <button onClick={() => removeSport(sport.id)} className="p-2 hover:bg-red-900/20 rounded-lg text-slate-400 hover:text-red-400 transition-colors">
-                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                        </button>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                    ))}
-                </div>
-                
-                <div className="flex items-center gap-3 p-4 bg-slate-900/30 rounded-lg border border-slate-700/50">
-                     <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-500">
-                        +
-                     </div>
-                     <input 
-                        type="text" 
-                        value={newSportName}
-                        onChange={e => setNewSportName(e.target.value)}
-                        placeholder="Nome (es. Pickleball)"
-                        className="flex-1 bg-transparent border-b border-slate-700 focus:border-indigo-500 outline-none text-white py-2 transition-colors"
-                    />
-                    <Button onClick={handleAddSport} disabled={!newSportName}>Aggiungi</Button>
-                </div>
-            </div>
-
-            {/* Locations Management */}
-            <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6">
-                <h3 className="text-lg font-bold text-white mb-2">Sedi</h3>
-                <p className="text-sm text-slate-400 mb-6">Dove si svolgono le lezioni e su quale calendario salvare.</p>
-                 <div className="space-y-3 mb-6">
-                    {config.locations.map(loc => (
-                        <div key={loc.id} className="bg-slate-900/50 p-4 rounded-lg border border-slate-700 flex items-center justify-between gap-4">
-                             {editingLocationId === loc.id ? (
-                                <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <input 
-                                        className="p-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
-                                        value={tempLocation.name || ''} 
-                                        onChange={e => setTempLocation({...tempLocation, name: e.target.value})} 
-                                    />
-                                    <input 
-                                        className="p-2 bg-slate-800 border border-slate-600 rounded text-white text-sm"
-                                        value={tempLocation.address || ''} 
-                                        onChange={e => setTempLocation({...tempLocation, address: e.target.value})} 
-                                    />
-                                    <input 
-                                        className="p-2 bg-slate-800 border border-slate-600 rounded text-white text-sm md:col-span-2"
-                                        value={tempLocation.googleCalendarId || ''} 
-                                        onChange={e => setTempLocation({...tempLocation, googleCalendarId: e.target.value})} 
-                                        placeholder="ID Google Calendar (opzionale)"
-                                    />
-                                    <div className="flex gap-2 md:col-span-2 justify-end">
-                                        <Button onClick={saveEditLocation} className="text-xs py-1 px-3">Salva</Button>
-                                        <button onClick={() => setEditingLocationId(null)} className="text-slate-400 text-xs hover:text-white">Annulla</button>
-                                    </div>
-                                </div>
-                            ) : (
-                                <>
-                                    <div>
-                                        <div className="font-bold text-white flex items-center gap-2">
-                                            {loc.name}
-                                            <button onClick={() => startEditLocation(loc)} className="text-slate-500 hover:text-white transition-colors">
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
-                                            </button>
-                                        </div>
-                                        <div className="text-sm text-slate-400">{loc.address}</div>
-                                        {loc.googleCalendarId && <div className="text-xs text-indigo-400 mt-1 font-mono bg-indigo-900/20 inline-block px-1 rounded">{loc.googleCalendarId}</div>}
-                                        {!loc.googleCalendarId && <div className="text-xs text-slate-600 mt-1 font-mono bg-slate-800 inline-block px-1 rounded">Nessun Cal ID</div>}
-                                    </div>
-                                    <button onClick={() => removeLocation(loc.id)} className="p-2 hover:bg-red-900/20 rounded-lg text-slate-400 hover:text-red-400 transition-colors">
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                    </button>
-                                </>
-                            )}
-                        </div>
-                    ))}
-                 </div>
-                 
-                 <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 space-y-3">
-                    <input 
-                        className="w-full bg-transparent border-b border-slate-700 focus:border-indigo-500 outline-none text-white py-2 transition-colors" 
-                        value={newLocationName} 
-                        onChange={e => setNewLocationName(e.target.value)} 
-                        placeholder="Nome Sede (es. Club Centrale)" 
-                    />
-                    <div className="flex gap-3">
-                        <input 
-                            className="flex-1 bg-transparent border-b border-slate-700 focus:border-indigo-500 outline-none text-white py-2 transition-colors" 
-                            value={newLocationAddr} 
-                            onChange={e => setNewLocationAddr(e.target.value)} 
-                            placeholder="Indirizzo" 
-                        />
-                        <Button onClick={handleAddLocation} disabled={!newLocationName}>Aggiungi</Button>
-                    </div>
-                 </div>
-            </div>
-
-             {/* Durations Management */}
-             <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6">
-                <h3 className="text-lg font-bold text-white mb-4">Durate Lezioni</h3>
-                <div className="flex flex-wrap gap-3 mb-6">
-                    {config.durations.map(d => (
-                         <div key={d.minutes} className="bg-slate-900 px-4 py-2 rounded-lg border border-slate-700 flex items-center gap-3">
-                             <span className="text-white font-bold">{d.minutes} min</span>
-                             <button onClick={() => removeDuration(d.minutes)} className="text-slate-500 hover:text-red-400">×</button>
-                         </div>
-                    ))}
-                </div>
-                 <div className="flex gap-3 max-w-xs">
-                    <input 
-                        type="number" 
-                        className="bg-slate-900 border border-slate-600 rounded-lg text-white px-3 w-24 text-center" 
-                        value={newDuration} 
-                        onChange={e => setNewDuration(e.target.value)} 
-                        placeholder="Min" 
-                    />
-                    <Button onClick={handleAddDuration}>Aggiungi Durata</Button>
-                 </div>
-             </div>
-
-             <div className="pt-10 border-t border-slate-800">
-                 <Button variant="ghost" onClick={handleResetConfig} className="text-red-500 hover:bg-red-950 hover:text-red-400 w-full">
-                     Ripristina Configurazione Iniziale
-                 </Button>
-             </div>
-        </div>
-      )}
-
-       {/* TAB: HOME SETTINGS */}
-       {activeTab === 'home' && (
+      {/* TAB: HOME */}
+      {activeTab === 'home' && (
            <div className="max-w-2xl mx-auto animate-in fade-in space-y-6">
                  <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6">
                     <h3 className="text-lg font-bold text-white mb-6">Testi Pagina Iniziale</h3>
                     <div className="space-y-6">
                         <div>
-                            <label className="text-xs text-slate-400 uppercase font-bold mb-2 block">Titolo Principale</label>
-                            <input 
-                                className="w-full p-4 bg-slate-900 border border-slate-600 rounded-lg text-white text-xl font-bold" 
-                                value={homeTitle} 
-                                onChange={e => setHomeTitle(e.target.value)} 
-                            />
+                            <label className="text-xs text-slate-400 uppercase font-bold mb-2 block">Titolo</label>
+                            <input className="w-full p-4 bg-slate-900 border border-slate-600 rounded-lg text-white text-xl font-bold" value={homeTitle} onChange={e => setHomeTitle(e.target.value)} />
                         </div>
                         <div>
                             <label className="text-xs text-slate-400 uppercase font-bold mb-2 block">Sottotitolo</label>
-                            <textarea 
-                                className="w-full p-4 bg-slate-900 border border-slate-600 rounded-lg text-white text-lg h-32 resize-none" 
-                                value={homeSubtitle} 
-                                onChange={e => setHomeSubtitle(e.target.value)} 
-                            />
+                            <textarea className="w-full p-4 bg-slate-900 border border-slate-600 rounded-lg text-white text-lg h-32 resize-none" value={homeSubtitle} onChange={e => setHomeSubtitle(e.target.value)} />
                         </div>
-                        <Button onClick={handleUpdateHome} className="w-full">Salva Modifiche</Button>
+                        <Button onClick={handleUpdateHome} className="w-full">Salva</Button>
                     </div>
                 </div>
            </div>
        )}
-
     </div>
   );
 };

@@ -1,24 +1,24 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { TimeSlot, Booking, Sport, Location, LessonDuration } from '../types';
+import { TimeSlot, Booking, Sport, SportLocation, LessonType, LessonDuration } from '../types';
 import { getAvailableSlots, saveBooking } from '../services/calendarService';
 import { getAppConfig } from '../services/configService';
 import { generateLessonPlan, suggestAvailabilitySummary } from '../services/geminiService';
 import Button from './Button';
 
 const BookingFlow: React.FC = () => {
-  // Carica la configurazione ogni volta che il componente viene montato
   const config = getAppConfig(); 
 
   const [currentStep, setCurrentStep] = useState(0);
   
-  // Selection State
+  // SELECTION STATE
   const [selectedSport, setSelectedSport] = useState<Sport | null>(null);
-  const [selectedLocation, setSelectedLocation] = useState<Location | null>(config.locations[0] || null);
-  const [selectedDuration, setSelectedDuration] = useState<LessonDuration | null>(config.durations[0] || null);
+  const [selectedLocation, setSelectedLocation] = useState<SportLocation | null>(null);
+  const [selectedLessonType, setSelectedLessonType] = useState<LessonType | null>(null);
+  const [selectedDuration, setSelectedDuration] = useState<number | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   
-  // Data State
+  // DATA STATE
   const [availableSlots, setAvailableSlots] = useState<TimeSlot[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
   const [isLoadingSlots, setIsLoadingSlots] = useState(false);
@@ -35,39 +35,35 @@ const BookingFlow: React.FC = () => {
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null);
   const [generatedPlan, setGeneratedPlan] = useState<string>('');
 
-  // Gestione caso nessuna configurazione
-  if (config.sports.length === 0) {
+  if (!config.sports || config.sports.length === 0) {
       return (
-          <div className="text-center py-20 bg-slate-800/50 backdrop-blur rounded-xl border border-dashed border-slate-700 text-slate-300">
-              <div className="text-5xl mb-4 opacity-50">⚙️</div>
-              <h3 className="text-xl font-bold text-white">Nessuna attività configurata</h3>
-              <p className="text-slate-400 mt-2 mb-6">Accedi alla Dashboard Istruttore per configurare Sport, Sedi e Durate.</p>
+          <div className="text-center py-20 text-slate-400">
+              <h3 className="text-xl font-bold text-white">Configurazione mancante</h3>
+              <p>L'istruttore deve configurare gli sport nella dashboard.</p>
           </div>
       );
   }
 
-  // Reset slot if params change
   useEffect(() => {
       setSelectedSlot(null);
   }, [selectedDate, selectedDuration]);
 
   const fetchSlots = useCallback(async () => {
-     if(!selectedDuration || !selectedLocation) return;
+     if(!selectedDuration || !selectedLocation || !selectedSport) return;
      
      setIsLoadingSlots(true);
-     // Simulate network delay for realism
-     await new Promise(r => setTimeout(r, 400));
+     await new Promise(r => setTimeout(r, 400)); // UX Delay
      
-     const slots = getAvailableSlots(selectedDate, selectedDuration.minutes, selectedLocation.id);
+     const slots = getAvailableSlots(selectedDate, selectedDuration, selectedSport.id, selectedLocation.id);
      setAvailableSlots(slots);
      setIsLoadingSlots(false);
 
      const availableCount = slots.filter(s => s.isAvailable).length;
      suggestAvailabilitySummary(availableCount).then(setAiSummary);
-  }, [selectedDate, selectedDuration, selectedLocation]);
+  }, [selectedDate, selectedDuration, selectedLocation, selectedSport]);
 
   useEffect(() => {
-    if (currentStep === 1) {
+    if (currentStep === 2) { // Slot selection step
         fetchSlots();
     }
   }, [currentStep, fetchSlots]);
@@ -84,11 +80,11 @@ const BookingFlow: React.FC = () => {
 
       setIsSubmitting(true);
 
-      // Generazione AI Piano Lezione
       const aiPlan = await generateLessonPlan({
           sport: selectedSport.name,
           skillLevel: formData.level,
-          durationMinutes: selectedDuration.minutes,
+          durationMinutes: selectedDuration,
+          lessonType: selectedLessonType?.name
       });
       setGeneratedPlan(aiPlan);
 
@@ -98,7 +94,9 @@ const BookingFlow: React.FC = () => {
           sportName: selectedSport.name,
           locationId: selectedLocation.id,
           locationName: selectedLocation.name,
-          durationMinutes: selectedDuration.minutes,
+          lessonTypeId: selectedLessonType?.id,
+          lessonTypeName: selectedLessonType?.name,
+          durationMinutes: selectedDuration,
           date: selectedDate.toISOString().split('T')[0],
           timeSlotId: selectedSlot.id,
           startTime: selectedSlot.startTime,
@@ -112,131 +110,145 @@ const BookingFlow: React.FC = () => {
       saveBooking(newBooking);
       setConfirmedBooking(newBooking);
       setIsSubmitting(false);
-      setCurrentStep(3);
+      setCurrentStep(4); // Success Step
   };
 
-  // Step 1: Configurations (Sport, Location, Duration)
+  // --- STEP 0: SPORT SELECTION ---
   if (currentStep === 0) {
-    return (
-      <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div className="text-center space-y-3">
-            <h1 className="text-4xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400 tracking-tight">
-                {config.homeTitle}
-            </h1>
-            <p className="text-lg text-slate-400 max-w-xl mx-auto leading-relaxed">
-                {config.homeSubtitle}
-            </p>
-        </div>
-
-        {/* Sport Selection - Solo testo, niente icone */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto">
-            {config.sports.map(sport => (
-                <button 
-                    key={sport.id}
-                    onClick={() => setSelectedSport(sport)}
-                    className={`group relative p-6 rounded-2xl text-left transition-all duration-300 border ${selectedSport?.id === sport.id 
-                        ? 'bg-indigo-600/20 border-indigo-500 shadow-[0_0_30px_rgba(79,70,229,0.15)]' 
-                        : 'bg-slate-800/50 border-slate-700 hover:bg-slate-800 hover:border-slate-600 hover:-translate-y-1'}`}
-                >
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <div className={`font-bold text-xl ${selectedSport?.id === sport.id ? 'text-white' : 'text-slate-200 group-hover:text-white'}`}>
-                                {sport.name}
-                            </div>
-                            <p className="text-sm text-slate-400 mt-1 font-light">{sport.description}</p>
-                        </div>
-                        {selectedSport?.id === sport.id && (
-                            <div className="w-6 h-6 rounded-full bg-indigo-500 text-white flex items-center justify-center shadow-lg shadow-indigo-500/50">
-                                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"></path></svg>
-                            </div>
-                        )}
-                    </div>
-                </button>
-            ))}
-        </div>
-
-        {selectedSport && (
-            <div className="bg-slate-800/40 backdrop-blur border border-slate-700 rounded-2xl p-6 grid grid-cols-1 md:grid-cols-2 gap-8 animate-in fade-in slide-in-from-bottom-2">
-                 {/* Location */}
-                 <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-3 uppercase tracking-wider">Sede</label>
-                    <select 
-                        className="w-full p-4 border border-slate-600 rounded-xl bg-slate-900/50 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-                        onChange={(e) => setSelectedLocation(config.locations.find(l => l.id === e.target.value) || null)}
-                        value={selectedLocation?.id}
-                    >
-                        {config.locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                    </select>
-                 </div>
-
-                 {/* Duration */}
-                 <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-3 uppercase tracking-wider">Durata</label>
-                    <div className="flex gap-3 flex-wrap">
-                        {config.durations.map(d => (
-                            <button
-                                key={d.minutes}
-                                onClick={() => setSelectedDuration(d)}
-                                className={`flex-1 min-w-[80px] py-3 px-4 rounded-xl font-medium text-sm transition-all ${selectedDuration?.minutes === d.minutes 
-                                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' 
-                                    : 'bg-slate-900/50 text-slate-400 border border-slate-600 hover:border-slate-500 hover:text-white'}`}
-                            >
-                                {d.minutes} min
-                            </button>
-                        ))}
-                    </div>
-                 </div>
+      return (
+        <div className="space-y-10 animate-in fade-in">
+            <div className="text-center space-y-3">
+                <h1 className="text-4xl font-extrabold text-white">{config.homeTitle}</h1>
+                <p className="text-lg text-slate-400 max-w-xl mx-auto">{config.homeSubtitle}</p>
             </div>
-        )}
-
-        <div className="flex justify-center pt-4">
-            <Button 
-                disabled={!selectedSport || !selectedLocation || !selectedDuration} 
-                onClick={() => setCurrentStep(1)}
-                className="w-full md:w-auto md:min-w-[200px] text-lg"
-            >
-                Avanti
-            </Button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto">
+                {config.sports.map(sport => (
+                    <button 
+                        key={sport.id}
+                        onClick={() => { setSelectedSport(sport); setCurrentStep(1); }}
+                        className="group p-6 rounded-2xl text-left transition-all duration-300 bg-slate-800/50 border border-slate-700 hover:bg-slate-800 hover:border-indigo-500 hover:shadow-lg hover:shadow-indigo-500/20"
+                    >
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <div className="text-4xl mb-2">{sport.emoji}</div>
+                                <div className="font-bold text-xl text-white group-hover:text-indigo-400 transition-colors">{sport.name}</div>
+                                <p className="text-sm text-slate-400 mt-1">{sport.description}</p>
+                            </div>
+                            <div className="w-8 h-8 rounded-full bg-slate-700 text-slate-400 flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-all">→</div>
+                        </div>
+                    </button>
+                ))}
+            </div>
         </div>
-      </div>
-    );
+      );
   }
 
-  // Step 2: Date & Time
-  if (currentStep === 1) {
+  // --- STEP 1: DETAILS (Location, Type, Duration) ---
+  if (currentStep === 1 && selectedSport) {
+      return (
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
+              <button onClick={() => setCurrentStep(0)} className="text-slate-400 hover:text-white text-sm flex items-center gap-1">← Cambia Sport</button>
+              
+              <div className="text-center mb-8">
+                  <div className="text-4xl mb-2">{selectedSport.emoji}</div>
+                  <h2 className="text-3xl font-bold text-white">{selectedSport.name}</h2>
+                  <p className="text-slate-400">Configura la tua lezione</p>
+              </div>
+
+              <div className="bg-slate-800/40 backdrop-blur border border-slate-700 rounded-2xl p-6 max-w-2xl mx-auto space-y-6">
+                  
+                  {/* Location Selection */}
+                  <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Dove vuoi giocare?</label>
+                      {selectedSport.locations.length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {selectedSport.locations.map(loc => (
+                                  <button
+                                      key={loc.id}
+                                      onClick={() => setSelectedLocation(loc)}
+                                      className={`p-4 rounded-xl border text-left transition-all ${selectedLocation?.id === loc.id ? 'bg-indigo-600/20 border-indigo-500 text-white' : 'bg-slate-900/50 border-slate-700 text-slate-300 hover:border-slate-500'}`}
+                                  >
+                                      <div className="font-bold">{loc.name}</div>
+                                      <div className="text-xs opacity-70">{loc.address}</div>
+                                  </button>
+                              ))}
+                          </div>
+                      ) : <div className="text-red-400 text-sm">Nessuna sede disponibile per questo sport.</div>}
+                  </div>
+
+                  {/* Lesson Type Selection */}
+                  {selectedLocation && (
+                    <div className="animate-in fade-in">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Tipo di Lezione</label>
+                        <div className="flex flex-wrap gap-3">
+                            {selectedSport.lessonTypes.map(type => (
+                                <button
+                                    key={type.id}
+                                    onClick={() => setSelectedLessonType(type)}
+                                    className={`px-4 py-2 rounded-lg border text-sm font-medium transition-all ${selectedLessonType?.id === type.id ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-900/50 text-slate-300 border-slate-700 hover:border-slate-500'}`}
+                                >
+                                    {type.name}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                  )}
+
+                  {/* Duration Selection */}
+                  {selectedLocation && selectedLessonType && (
+                      <div className="animate-in fade-in">
+                          <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Durata</label>
+                          <div className="flex flex-wrap gap-3">
+                              {selectedSport.durations.map(d => (
+                                  <button
+                                      key={d}
+                                      onClick={() => setSelectedDuration(d)}
+                                      className={`px-4 py-2 rounded-lg border text-sm font-medium transition-all ${selectedDuration === d ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-900/50 text-slate-300 border-slate-700 hover:border-slate-500'}`}
+                                  >
+                                      {d} Minuti
+                                  </button>
+                              ))}
+                          </div>
+                      </div>
+                  )}
+              </div>
+
+              <div className="flex justify-center pt-4">
+                <Button 
+                    disabled={!selectedLocation || !selectedLessonType || !selectedDuration} 
+                    onClick={() => setCurrentStep(2)}
+                    className="w-full md:w-auto md:min-w-[200px] text-lg"
+                >
+                    Vedi Orari Disponibili
+                </Button>
+            </div>
+          </div>
+      );
+  }
+
+  // --- STEP 2: DATE & TIME ---
+  if (currentStep === 2 && selectedSport) {
       return (
         <div className="space-y-6 animate-in fade-in">
             <div className="flex items-center justify-between mb-2">
-                <button onClick={() => setCurrentStep(0)} className="text-slate-400 hover:text-white text-sm flex items-center gap-1 transition-colors">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
-                    Modifica
-                </button>
-                <div className="text-right hidden sm:block">
-                    <div className="font-bold text-white">{selectedSport?.name} @ {selectedLocation?.name}</div>
-                    <div className="text-xs text-slate-400">{selectedDuration?.minutes} minuti</div>
+                <button onClick={() => setCurrentStep(1)} className="text-slate-400 hover:text-white text-sm flex items-center gap-1">← Indietro</button>
+                <div className="text-right hidden sm:block text-xs text-slate-500">
+                    {selectedSport.name} • {selectedLocation?.name} • {selectedDuration} min
                 </div>
             </div>
 
             <div className="bg-slate-800/50 backdrop-blur rounded-2xl border border-slate-700 p-6 md:p-8 shadow-xl">
-                {/* Date Picker Header */}
                 <div className="flex items-center justify-between mb-8 bg-slate-900/50 p-4 rounded-xl border border-slate-700/50">
-                    <button onClick={() => handleDateChange(-1)} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all">
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
-                    </button>
+                    <button onClick={() => handleDateChange(-1)} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg></button>
                     <div className="text-center">
                         <div className="text-xl font-bold text-white capitalize">
                             {selectedDate.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
                         </div>
-                        <div className="text-sm text-indigo-400 font-medium mt-1 h-5 animate-pulse">
-                            {isLoadingSlots ? 'Sto cercando...' : aiSummary}
-                        </div>
+                        <div className="text-sm text-indigo-400 font-medium mt-1 h-5 animate-pulse">{isLoadingSlots ? '...' : aiSummary}</div>
                     </div>
-                    <button onClick={() => handleDateChange(1)} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all">
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg>
-                    </button>
+                    <button onClick={() => handleDateChange(1)} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg></button>
                 </div>
 
-                {/* Slots Grid */}
                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
                     {isLoadingSlots ? Array.from({length: 10}).map((_, i) => (
                         <div key={i} className="h-12 bg-slate-700/50 rounded-lg animate-pulse"></div>
@@ -245,155 +257,72 @@ const BookingFlow: React.FC = () => {
                             key={slot.id}
                             disabled={!slot.isAvailable}
                             onClick={() => setSelectedSlot(slot)}
-                            className={`py-3 px-2 rounded-xl text-sm font-medium transition-all relative overflow-hidden ${
-                                selectedSlot?.id === slot.id 
-                                ? 'bg-indigo-600 text-white shadow-lg ring-2 ring-indigo-400 ring-offset-2 ring-offset-slate-900' 
-                                : slot.isAvailable 
-                                    ? 'bg-slate-700/50 text-slate-200 hover:bg-slate-600 hover:text-white border border-slate-600/50' 
-                                    : 'bg-slate-900/50 text-slate-600 cursor-not-allowed border border-transparent'
-                            }`}
+                            className={`py-3 px-2 rounded-xl text-sm font-medium transition-all ${selectedSlot?.id === slot.id ? 'bg-indigo-600 text-white shadow-lg ring-2 ring-indigo-400' : slot.isAvailable ? 'bg-slate-700/50 text-slate-200 hover:bg-slate-600' : 'bg-slate-900/50 text-slate-600 cursor-not-allowed'}`}
                         >
                             {new Date(slot.startTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                         </button>
                     )) : (
-                        <div className="col-span-full text-center py-10 text-slate-500">
-                            Nessuno slot disponibile per questa data.
-                        </div>
+                        <div className="col-span-full text-center py-10 text-slate-500">Nessuno slot disponibile.</div>
                     )}
                 </div>
             </div>
 
             <div className="flex justify-center pt-4">
-                <Button 
-                    disabled={!selectedSlot} 
-                    onClick={() => setCurrentStep(2)}
-                    className="w-full md:w-auto md:min-w-[200px]"
-                >
-                    Continua
-                </Button>
+                <Button disabled={!selectedSlot} onClick={() => setCurrentStep(3)} className="w-full md:w-auto md:min-w-[200px]">Continua</Button>
             </div>
         </div>
       );
   }
 
-  // Step 3: User Details
-  if (currentStep === 2) {
+  // --- STEP 3: USER DATA ---
+  if (currentStep === 3) {
       return (
           <div className="space-y-6 animate-in fade-in">
-            <button onClick={() => setCurrentStep(1)} className="text-slate-400 hover:text-white text-sm flex items-center gap-1 transition-colors mb-2">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
-                Indietro
-            </button>
+            <button onClick={() => setCurrentStep(2)} className="text-slate-400 hover:text-white text-sm flex items-center gap-1 mb-2">← Indietro</button>
             
             <div className="bg-slate-800/50 backdrop-blur rounded-2xl border border-slate-700 p-6 md:p-8 shadow-xl">
                 <h2 className="text-2xl font-bold text-white mb-6">I tuoi Dati</h2>
                 <div className="space-y-5">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                        <div>
-                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Nome Completo</label>
-                            <input 
-                                type="text" 
-                                className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                                value={formData.name}
-                                onChange={e => setFormData({...formData, name: e.target.value})}
-                                placeholder="Il tuo nome"
-                            />
-                        </div>
-                         <div>
-                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Email</label>
-                            <input 
-                                type="email" 
-                                className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                                value={formData.email}
-                                onChange={e => setFormData({...formData, email: e.target.value})}
-                                placeholder="tu@email.com"
-                            />
-                        </div>
+                        <input type="text" className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Nome Completo" />
+                        <input type="email" className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} placeholder="Email" />
                     </div>
-
                     <div>
-                         <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Livello di Gioco</label>
+                         <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Livello</label>
                          <div className="grid grid-cols-3 gap-3">
                              {['Beginner', 'Intermediate', 'Advanced'].map(level => (
-                                 <button 
-                                    key={level}
-                                    onClick={() => setFormData({...formData, level: level as any})}
-                                    className={`py-3 rounded-xl text-sm font-medium transition-all border ${formData.level === level 
-                                        ? 'bg-indigo-600 text-white border-indigo-500' 
-                                        : 'bg-slate-900 text-slate-400 border-slate-700 hover:border-slate-500'}`}
-                                 >
-                                     {level === 'Beginner' ? 'Principiante' : level === 'Intermediate' ? 'Intermedio' : 'Avanzato'}
-                                 </button>
+                                 <button key={level} onClick={() => setFormData({...formData, level: level as any})} className={`py-3 rounded-xl text-sm font-medium border ${formData.level === level ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-900 text-slate-400 border-slate-700'}`}>{level}</button>
                              ))}
                          </div>
                     </div>
-
-                    <div>
-                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Note per l'istruttore (Opzionale)</label>
-                        <textarea 
-                            className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all min-h-[100px]"
-                            value={formData.notes}
-                            onChange={e => setFormData({...formData, notes: e.target.value})}
-                            placeholder="Su cosa vuoi lavorare oggi?"
-                        />
-                    </div>
+                    <textarea className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white min-h-[100px]" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} placeholder="Note aggiuntive..." />
                 </div>
             </div>
 
              <div className="flex justify-center pt-4">
-                <Button 
-                    disabled={!formData.name || !formData.email} 
-                    onClick={handleConfirm}
-                    isLoading={isSubmitting}
-                    className="w-full md:w-auto md:min-w-[250px] py-4 text-lg"
-                >
-                    Conferma Prenotazione
-                </Button>
+                <Button disabled={!formData.name || !formData.email} onClick={handleConfirm} isLoading={isSubmitting} className="w-full md:w-auto md:min-w-[250px] py-4 text-lg">Conferma Prenotazione</Button>
             </div>
           </div>
       );
   }
 
-  // Step 4: Success
-  if (currentStep === 3 && confirmedBooking) {
+  // --- STEP 4: SUCCESS ---
+  if (currentStep === 4 && confirmedBooking) {
       return (
           <div className="text-center py-10 animate-in zoom-in duration-500">
-              <div className="w-24 h-24 bg-emerald-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-emerald-500/30">
-                  <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
-              </div>
+              <div className="w-24 h-24 bg-emerald-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-emerald-500/30">✓</div>
               <h2 className="text-4xl font-bold text-white mb-2">Prenotazione Confermata!</h2>
-              <p className="text-slate-400 mb-8">Ti abbiamo inviato una mail di conferma.</p>
-
-              <div className="bg-slate-800/80 backdrop-blur rounded-2xl border border-slate-700 p-8 max-w-2xl mx-auto text-left shadow-2xl">
-                  <div className="flex items-center gap-4 mb-6 border-b border-slate-700 pb-6">
-                      <div className="bg-slate-700 p-3 rounded-lg">
-                         <svg className="w-6 h-6 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                      </div>
-                      <div>
-                          <div className="font-bold text-white text-lg capitalize">
-                              {new Date(confirmedBooking.date).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long'})}
-                          </div>
-                          <div className="text-indigo-400">
-                              {new Date(confirmedBooking.startTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {selectedDuration?.minutes} min
-                          </div>
-                      </div>
+              <div className="bg-slate-800/80 backdrop-blur rounded-2xl border border-slate-700 p-8 max-w-2xl mx-auto text-left shadow-2xl mt-8">
+                  <div className="font-bold text-white text-lg mb-4">{new Date(confirmedBooking.date).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long'})} alle {new Date(confirmedBooking.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                  <div className="text-slate-300 mb-6">
+                      {confirmedBooking.sportName} - {confirmedBooking.locationName}<br/>
+                      {confirmedBooking.lessonTypeName} ({confirmedBooking.durationMinutes} min)
                   </div>
-
-                  <div className="space-y-4">
-                      <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500">Piano di Allenamento Generato da IA</h3>
-                      <div className="prose prose-invert prose-sm max-w-none bg-slate-900/50 p-6 rounded-xl border border-slate-700/50">
-                         {generatedPlan.split('\n').map((line, i) => (
-                             <p key={i} className={line.startsWith('**') || line.startsWith('#') ? 'font-bold text-white mt-4' : 'text-slate-300'}>
-                                 {line.replace(/\*\*/g, '').replace(/#/g, '')}
-                             </p>
-                         ))}
-                      </div>
+                  <div className="prose prose-invert prose-sm max-w-none bg-slate-900/50 p-6 rounded-xl border border-slate-700/50">
+                     {generatedPlan.split('\n').map((line, i) => <p key={i} className={line.startsWith('**') ? 'font-bold text-white mt-4' : 'text-slate-300'}>{line.replace(/\*\*/g, '')}</p>)}
                   </div>
               </div>
-              
-              <div className="mt-10">
-                  <Button variant="outline" onClick={() => window.location.reload()}>Torna alla Home</Button>
-              </div>
+              <Button variant="outline" onClick={() => window.location.reload()} className="mt-10">Torna alla Home</Button>
           </div>
       );
   }
