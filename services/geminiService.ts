@@ -1,9 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
 import { LessonPlanRequest } from "../types";
 
-// Initialize Gemini Client
-// Ensure process.env.API_KEY is available in your environment
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+// API Key fornita dall'utente
+const API_KEY = 'AIzaSyAv_qusWIgR7g2C1w1MeLyCNQNghZg9sWA';
+
+const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 export const generateLessonPlan = async (request: LessonPlanRequest): Promise<string> => {
   try {

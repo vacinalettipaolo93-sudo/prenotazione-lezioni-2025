@@ -2,7 +2,7 @@
 import { TimeSlot, Booking, CalendarEvent } from '../types';
 import { getAppConfig } from './configService';
 import { db } from './firebase';
-import { collection, addDoc, onSnapshot, query, orderBy, where, getDocs, deleteDoc, doc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, where, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 
 // --- CONFIGURAZIONE GOOGLE CALENDAR ---
 // SOSTITUISCI QUESTI VALORI CON QUELLI PRESI DA GOOGLE CLOUD CONSOLE
@@ -10,7 +10,7 @@ const CLIENT_ID = '747839079234-9kb2r0iviapcqci554cfheaksqe3lm29.apps.googleuser
 const API_KEY = 'AIzaSyAv_qusWIgR7g2C1w1MeLyCNQNghZg9sWA'; 
 
 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
-const SCOPES = 'https://www.googleapis.com/auth/calendar.events.readonly';
+const SCOPES = 'https://www.googleapis.com/auth/calendar.events'; // Scope aumentato per poter scrivere
 
 const BOOKING_COLLECTION = 'bookings';
 
@@ -66,9 +66,6 @@ export const saveBooking = async (booking: Booking): Promise<void> => {
       const { id, ...bookingData } = booking; 
       await addDoc(collection(db, BOOKING_COLLECTION), bookingData);
       console.log(`[Firebase] Booking saved for: ${booking.customerName}`);
-      // Nota: Qui potremmo aggiungere la logica per scrivere ANCHE su Google Calendar
-      // se l'utente che prenota fosse l'istruttore, ma essendo il cliente, 
-      // salviamo solo su Firebase. La sync verso Google dovrebbe essere fatta lato server.
   } catch (e) {
       console.error("Errore salvataggio prenotazione:", e);
       alert("Errore di rete. Riprova.");
@@ -233,9 +230,7 @@ export const disconnectGoogleCalendar = () => {
 };
 
 /**
- * QUESTA È LA FUNZIONE MAGICA
  * Scarica gli eventi da Google Calendar e li salva su Firebase come "EXTERNAL_BUSY".
- * Così facendo, sono visibili a TUTTI gli utenti che prenotano.
  */
 export const syncGoogleEventsToFirebase = async (calendarId: string = 'primary') => {
     const gapi = (window as any).gapi;
@@ -243,12 +238,10 @@ export const syncGoogleEventsToFirebase = async (calendarId: string = 'primary')
         throw new Error("Google API non inizializzate");
     }
     
-    // Controllo se abbiamo il token. Se l'utente ha ricaricato la pagina, potrebbe averlo perso.
     if (gapi.client.getToken() === null) {
         throw new Error("Token scaduto o mancante. Riconnetti il calendario.");
     }
 
-    // 1. Scarica eventi futuri da Google (prossimi 30 giorni)
     const now = new Date();
     const nextMonth = new Date();
     nextMonth.setDate(nextMonth.getDate() + 30);
@@ -265,26 +258,23 @@ export const syncGoogleEventsToFirebase = async (calendarId: string = 'primary')
 
         const googleEvents = response.result.items;
 
-        // 2. Cancella vecchi eventi "EXTERNAL_BUSY" da Firebase (pulizia)
-        // Attenzione: cancella solo quelli generati dalla sync, non le prenotazioni reali
         const q = query(collection(db, BOOKING_COLLECTION), where("sportName", "==", "EXTERNAL_BUSY"));
         const snapshot = await getDocs(q);
         const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, BOOKING_COLLECTION, d.id)));
         await Promise.all(deletePromises);
 
-        // 3. Aggiungi i nuovi eventi a Firebase
         const addPromises = googleEvents.map((ev: any) => {
-            if (!ev.start.dateTime) return Promise.resolve(); // Salta eventi tutto il giorno per semplicità ora
+            if (!ev.start.dateTime) return Promise.resolve(); 
             
             const start = new Date(ev.start.dateTime);
             const end = new Date(ev.end.dateTime);
             const duration = (end.getTime() - start.getTime()) / 60000;
 
             const busyBlock: Booking = {
-                id: `gcal_${ev.id}`, // ID temporaneo
+                id: `gcal_${ev.id}`, 
                 sportId: 'external',
                 sportName: 'EXTERNAL_BUSY',
-                locationId: 'all', // Blocca su tutte le sedi (si può affinare in futuro)
+                locationId: 'all', 
                 locationName: 'Google Calendar',
                 durationMinutes: duration,
                 date: start.toISOString().split('T')[0],
@@ -305,4 +295,68 @@ export const syncGoogleEventsToFirebase = async (calendarId: string = 'primary')
         console.error("Errore Sync Google:", error);
         throw error;
     }
+};
+
+/**
+ * Prende tutte le prenotazioni da Firebase che NON hanno ancora un 'googleEventId'
+ * e le crea sul calendario Google dell'istruttore.
+ */
+export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primary'): Promise<number> => {
+    const gapi = (window as any).gapi;
+    if (!gapi || !gapi.client || gapi.client.getToken() === null) {
+        throw new Error("Devi connettere il calendario prima di esportare.");
+    }
+
+    const config = getAppConfig();
+    
+    // 1. Trova prenotazioni non sincronizzate (escludendo i blocchi EXTERNAL_BUSY)
+    const unsyncedBookings = cachedBookings.filter(b => 
+        !b.googleEventId && 
+        b.sportName !== 'EXTERNAL_BUSY' && 
+        new Date(b.startTime) > new Date() // Solo eventi futuri
+    );
+
+    let successCount = 0;
+
+    for (const booking of unsyncedBookings) {
+        try {
+            // Determina il calendario target: o quello della location specifica o 'primary'
+            let targetCalendarId = defaultCalendarId;
+            const location = config.locations.find(l => l.id === booking.locationId);
+            if (location && location.googleCalendarId) {
+                targetCalendarId = location.googleCalendarId;
+            }
+
+            const event = {
+                'summary': `🎾 Lezione ${booking.sportName}: ${booking.customerName}`,
+                'location': booking.locationName,
+                'description': `Cliente: ${booking.customerName} (${booking.customerEmail})\nLivello: ${booking.skillLevel}\nNote: ${booking.notes || 'Nessuna'}\n\nPiano AI: ${booking.aiLessonPlan?.substring(0, 100)}...`,
+                'start': {
+                    'dateTime': booking.startTime, 
+                },
+                'end': {
+                    'dateTime': new Date(new Date(booking.startTime).getTime() + booking.durationMinutes * 60000).toISOString(), 
+                }
+            };
+
+            // Chiamata API a Google
+            const response = await gapi.client.calendar.events.insert({
+                'calendarId': targetCalendarId,
+                'resource': event
+            });
+
+            if (response.result && response.result.id) {
+                // Aggiorna il documento Firebase con l'ID dell'evento Google per non duplicarlo in futuro
+                const bookingRef = doc(db, BOOKING_COLLECTION, booking.id);
+                await updateDoc(bookingRef, { googleEventId: response.result.id });
+                successCount++;
+            }
+
+        } catch (error) {
+            console.error(`Errore export prenotazione ${booking.customerName}:`, error);
+            // Continua con la prossima, non bloccare tutto
+        }
+    }
+
+    return successCount;
 };

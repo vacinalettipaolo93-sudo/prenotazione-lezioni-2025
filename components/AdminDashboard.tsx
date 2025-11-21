@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { CalendarEvent, AppConfig, WeeklySchedule, Location } from '../types';
-import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase } from '../services/calendarService';
+import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase, exportBookingsToGoogle, getBookings } from '../services/calendarService';
 import { getAppConfig, addSport, removeSport, addLocation, removeLocation, addDuration, removeDuration, updateHomeConfig, updateLocationSchedule, updateLocationDetails, updateMinBookingNotice } from '../services/configService';
 import { logout } from '../services/authService';
 import Button from './Button';
@@ -16,6 +16,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [isConnected, setIsConnected] = useState(isCalendarConnected());
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [config, setConfig] = useState<AppConfig>(getAppConfig());
   const [publicLinkCopied, setPublicLinkCopied] = useState(false);
 
@@ -102,12 +103,31 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           // Sync per la prima location che ha un Calendar ID, o 'primary' come fallback
           const calendarId = config.locations[0]?.googleCalendarId || 'primary';
           const count = await syncGoogleEventsToFirebase(calendarId);
-          alert(`Sincronizzazione completata! ${count} eventi importati da Google.`);
+          alert(`Sincronizzazione da Google completata! ${count} eventi importati.`);
           refreshData();
       } catch (e) {
           alert("Errore durante la sincronizzazione. Assicurati di essere loggato.");
       } finally {
           setIsSyncing(false);
+      }
+  }
+
+  const handleExportToGoogle = async () => {
+      if (!isConnected) return;
+      setIsExporting(true);
+      try {
+          const count = await exportBookingsToGoogle('primary');
+          if (count > 0) {
+              alert(`Successo! ${count} nuove prenotazioni esportate sul tuo Google Calendar.`);
+          } else {
+              alert("Nessuna nuova prenotazione da esportare (tutte già sincronizzate).");
+          }
+          refreshData();
+      } catch (e) {
+          console.error(e);
+          alert("Errore durante l'esportazione. Verifica la connessione.");
+      } finally {
+          setIsExporting(false);
       }
   }
 
@@ -268,20 +288,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                             <h3 className="font-bold text-lg text-white">Google Calendar</h3>
                             <p className="text-sm text-slate-400">
                                 {isConnected 
-                                    ? "Connesso. Clicca 'Aggiorna Disponibilità' per bloccare gli slot basati sul tuo calendario." 
-                                    : "Connetti per sincronizzare i tuoi impegni."}
+                                    ? "Connesso e operativo." 
+                                    : "Connetti per abilitare la sincronizzazione bidirezionale."}
                             </p>
                         </div>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2 justify-center md:justify-end">
                         {!isConnected ? (
                              <Button onClick={handleConnectCalendar} isLoading={isConnecting} variant="outline">
                                  Connetti Account Google
                              </Button>
                         ) : (
                             <>
-                             <Button onClick={handleSyncNow} isLoading={isSyncing} variant="secondary">
-                                 Aggiorna Disponibilità (Sync)
+                             <Button onClick={handleSyncNow} isLoading={isSyncing} variant="secondary" className="text-sm">
+                                 1. Scarica impegni da Google
+                             </Button>
+                             <Button onClick={handleExportToGoogle} isLoading={isExporting} variant="primary" className="text-sm">
+                                 2. Esporta Prenotazioni su Google
                              </Button>
                              <Button onClick={handleDisconnect} variant="ghost" className="text-red-400 hover:bg-red-900/20">
                                  Disconnetti
@@ -306,8 +329,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                 {events.map(ev => (
                                     <li key={ev.id} className="p-4 flex items-center gap-4 hover:bg-slate-800/50 transition-colors">
                                         <div className={`w-1 h-10 rounded-full ${ev.type === 'APP_BOOKING' ? 'bg-indigo-500' : 'bg-emerald-500'}`}></div>
-                                        <div>
-                                            <div className="font-bold text-slate-200">{ev.title}</div>
+                                        <div className="flex-1">
+                                            <div className="flex justify-between items-start">
+                                                <div className="font-bold text-slate-200">{ev.title}</div>
+                                                {ev.type === 'APP_BOOKING' && (
+                                                     // Mostra status sync solo se siamo admin
+                                                     <span className="text-[10px] bg-slate-700 px-1 rounded text-slate-400">
+                                                        {getBookings().find(b => b.id === ev.id)?.googleEventId ? '✓ Su Google' : 'In attesa Export'}
+                                                     </span>
+                                                )}
+                                            </div>
                                             <div className="text-xs text-slate-500">
                                                 {new Date(ev.start).toLocaleString('it-IT')}
                                             </div>
@@ -322,15 +353,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     </div>
 
                     <div className="bg-slate-900/50 border border-slate-700 rounded-xl p-6">
-                        <h3 className="font-bold text-slate-300 mb-2">Come funziona la Sync?</h3>
-                        <ul className="text-sm text-slate-400 space-y-2 list-disc pl-4">
-                            <li>Accedi con il tuo account Google Istruttore.</li>
-                            <li>Clicca <strong>Aggiorna Disponibilità</strong> ogni volta che aggiungi impegni personali sul tuo Google Calendar.</li>
-                            <li>L'app leggerà i tuoi impegni per i prossimi 30 giorni e li bloccherà sull'app.</li>
-                            <li>I clienti vedranno quegli orari come "Non disponibili".</li>
+                        <h3 className="font-bold text-slate-300 mb-2">Guida alla Sync</h3>
+                        <ul className="text-sm text-slate-400 space-y-4 list-decimal pl-4">
+                            <li>
+                                <strong>Scarica Impegni:</strong><br/>
+                                Prende le tue cene, riunioni, ecc. dal tuo calendario Google e le blocca sull'app, così nessuno può prenotare in quegli orari.
+                            </li>
+                            <li>
+                                <strong>Esporta Prenotazioni:</strong><br/>
+                                Prende le lezioni prenotate dai clienti sull'app e le scrive sul tuo calendario Google reale.
+                            </li>
                         </ul>
                         <div className="mt-4 p-3 bg-indigo-900/20 border border-indigo-500/30 rounded text-xs text-indigo-300">
-                            Nota: Ricordati di sincronizzare periodicamente per mantenere gli orari aggiornati!
+                            Suggerimento: Esegui entrambe le azioni ogni mattina per avere il calendario perfettamente allineato!
                         </div>
                     </div>
                 </div>
