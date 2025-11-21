@@ -6,8 +6,8 @@ import { collection, addDoc, onSnapshot, query, orderBy, where, getDocs, deleteD
 
 // --- CONFIGURAZIONE GOOGLE CALENDAR ---
 // SOSTITUISCI QUESTI VALORI CON QUELLI PRESI DA GOOGLE CLOUD CONSOLE
-const CLIENT_ID = 'INSERISCI_QUI_IL_TUO_CLIENT_ID_DI_GOOGLE_CLOUD'; 
-const API_KEY = 'INSERISCI_QUI_LA_TUA_API_KEY_DI_GOOGLE_CLOUD'; 
+const CLIENT_ID = '747839079234-9kb2r0iviapcqci554cfheaksqe3lm29.apps.googleusercontent.com'; 
+const API_KEY = 'AIzaSyAv_qusWIgR7g2C1w1MeLyCNQNghZg9sWA'; 
 
 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
 const SCOPES = 'https://www.googleapis.com/auth/calendar.events.readonly';
@@ -151,11 +151,16 @@ export const initGoogleClient = async (): Promise<void> => {
 
         // Init GAPI for API calls
         gapi.load('client', async () => {
-            await gapi.client.init({
-                apiKey: API_KEY,
-                discoveryDocs: [DISCOVERY_DOC],
-            });
-            gapiInited = true;
+            try {
+              await gapi.client.init({
+                  apiKey: API_KEY,
+                  discoveryDocs: [DISCOVERY_DOC],
+              });
+              gapiInited = true;
+            } catch (e) {
+              console.error("Errore GAPI Init (probabilmente API KEY errata):", e);
+            }
+            
             if (gisInited) resolve();
         });
 
@@ -177,7 +182,7 @@ export const isCalendarConnected = (): boolean => {
 export const connectGoogleCalendar = async (): Promise<boolean> => {
   return new Promise((resolve, reject) => {
     if (!tokenClient) {
-        alert("Errore configurazione Google. Verifica API Key e Client ID.");
+        alert("Configurazione Google incompleta. Ricarica la pagina.");
         reject(false);
         return;
     }
@@ -187,6 +192,13 @@ export const connectGoogleCalendar = async (): Promise<boolean> => {
         reject(resp);
         return;
       }
+      
+      // CRUCIALE: Impostiamo il token per le chiamate API successive
+      const gapi = (window as any).gapi;
+      if (gapi && gapi.client) {
+          gapi.client.setToken(resp);
+      }
+
       localStorage.setItem('courtmaster_gcal_token', 'true');
       resolve(true);
     };
@@ -203,9 +215,20 @@ export const connectGoogleCalendar = async (): Promise<boolean> => {
 
 export const disconnectGoogleCalendar = () => {
   const google = (window as any).google;
+  const gapi = (window as any).gapi;
+  
   if(google) {
-      google.accounts.oauth2.revoke(localStorage.getItem('courtmaster_gcal_token'), () => {console.log('Revoked')});
+      try {
+        google.accounts.oauth2.revoke(localStorage.getItem('courtmaster_gcal_token'), () => {console.log('Revoked')});
+      } catch (e) {
+        console.log("Errore revoca token (potrebbe essere già scaduto):", e);
+      }
   }
+  
+  if (gapi && gapi.client) {
+      gapi.client.setToken(null);
+  }
+
   localStorage.removeItem('courtmaster_gcal_token');
 };
 
@@ -218,6 +241,11 @@ export const syncGoogleEventsToFirebase = async (calendarId: string = 'primary')
     const gapi = (window as any).gapi;
     if (!gapi || !gapi.client) {
         throw new Error("Google API non inizializzate");
+    }
+    
+    // Controllo se abbiamo il token. Se l'utente ha ricaricato la pagina, potrebbe averlo perso.
+    if (gapi.client.getToken() === null) {
+        throw new Error("Token scaduto o mancante. Riconnetti il calendario.");
     }
 
     // 1. Scarica eventi futuri da Google (prossimi 30 giorni)
@@ -253,10 +281,10 @@ export const syncGoogleEventsToFirebase = async (calendarId: string = 'primary')
             const duration = (end.getTime() - start.getTime()) / 60000;
 
             const busyBlock: Booking = {
-                id: `gcal_${ev.id}`, // ID temporaneo, Firebase ne creerà uno suo o usiamo questo
+                id: `gcal_${ev.id}`, // ID temporaneo
                 sportId: 'external',
                 sportName: 'EXTERNAL_BUSY',
-                locationId: 'all', // Blocca su tutte le sedi? O specifica? Per ora blocchiamo tutto per sicurezza
+                locationId: 'all', // Blocca su tutte le sedi (si può affinare in futuro)
                 locationName: 'Google Calendar',
                 durationMinutes: duration,
                 date: start.toISOString().split('T')[0],
@@ -267,7 +295,6 @@ export const syncGoogleEventsToFirebase = async (calendarId: string = 'primary')
                 skillLevel: 'Beginner'
             };
             
-            // Usiamo addDoc per semplicità
             return addDoc(collection(db, BOOKING_COLLECTION), busyBlock);
         });
 
