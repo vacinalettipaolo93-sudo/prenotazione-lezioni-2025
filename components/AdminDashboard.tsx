@@ -84,9 +84,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     try {
         await connectGoogleCalendar();
         setIsConnected(true);
-    } catch (e) {
-        console.error(e);
-        alert("Errore connessione Google Calendar. Controlla console.");
+    } catch (e: any) {
+        console.error("Google Auth Error:", e);
+        if (e && e.error === 'access_denied') {
+            alert("ACCESSO NEGATO DA GOOGLE:\n\nL'app è in modalità 'Testing'. Devi aggiungere la tua email (@gmail.com) alla lista 'Test users' nella Google Cloud Console (sezione 'OAuth consent screen') per poter accedere.");
+        } else {
+            alert("Errore connessione Google Calendar. Controlla la console per i dettagli.");
+        }
     } finally {
         setIsConnecting(false);
         refreshEvents();
