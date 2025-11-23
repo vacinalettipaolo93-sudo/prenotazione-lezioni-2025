@@ -19,6 +19,7 @@ let tokenClient: any;
 let gapiInited = false;
 let gisInited = false;
 let autoSyncInterval: any = null;
+let initPromise: Promise<void> | null = null;
 
 // --- REAL-TIME SUBSCRIPTION ---
 
@@ -137,7 +138,10 @@ export const getAvailableSlots = (date: Date, durationMinutes: number, sportId: 
 // --- GOOGLE CALENDAR INTEGRATION (REAL) ---
 
 export const initGoogleClient = async (): Promise<void> => {
-    return new Promise((resolve) => {
+    // Singleton pattern per evitare inizializzazioni multiple concorrenti
+    if (initPromise) return initPromise;
+
+    initPromise = new Promise((resolve) => {
         const gapi = (window as any).gapi;
         const google = (window as any).google;
 
@@ -146,6 +150,38 @@ export const initGoogleClient = async (): Promise<void> => {
             resolve();
             return;
         }
+
+        const checkInitComplete = () => {
+            if (gapiInited && gisInited) {
+                // AUTO-RESTORE SESSION
+                const wasConnected = localStorage.getItem('courtmaster_gcal_token') === 'true';
+                if (wasConnected && tokenClient) {
+                     console.log("Tentativo ripristino sessione Google...");
+                     // Impostiamo una callback temporanea per il refresh silenzioso
+                     const originalCallback = tokenClient.callback;
+                     tokenClient.callback = (resp: any) => {
+                         if (resp.error) {
+                             console.warn("Ripristino sessione fallito:", resp);
+                             // Non slogghiamo brutalmente, ma l'utente vedrà disconnesso se prova a fare operazioni
+                         } else {
+                             console.log("Sessione Google ripristinata con successo.");
+                         }
+                         resolve();
+                     };
+
+                     try {
+                        // prompt: '' forza un refresh token silenzioso se il cookie Google è valido
+                        tokenClient.requestAccessToken({prompt: ''});
+                     } catch(e) {
+                         console.warn("Errore durante richiesta token silenziosa:", e);
+                         tokenClient.callback = originalCallback;
+                         resolve();
+                     }
+                } else {
+                    resolve();
+                }
+            }
+        };
 
         gapi.load('client', async () => {
             try {
@@ -157,32 +193,20 @@ export const initGoogleClient = async (): Promise<void> => {
             } catch (e) {
               console.error("Errore GAPI Init:", e);
             }
-            checkInitComplete(resolve);
+            checkInitComplete();
         });
 
         tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: CLIENT_ID,
             scope: SCOPES,
-            callback: '', // Defined later
+            callback: '', // Defined dynamically
         });
         gisInited = true;
-        checkInitComplete(resolve);
+        checkInitComplete();
     });
+    
+    return initPromise;
 };
-
-const checkInitComplete = (resolve: any) => {
-    if (gapiInited && gisInited) {
-        // AUTO-RESTORE SESSION: Se l'utente era connesso, proviamo a ripristinare il token
-        // senza prompt popup se possibile, oppure segnamo come connesso per sync futuri
-        const wasConnected = localStorage.getItem('courtmaster_gcal_token') === 'true';
-        if (wasConnected) {
-             // Non possiamo forzare un refresh token lato client puro senza backend in modo sicuro al 100%,
-             // ma possiamo evitare di chiedere il login se il cookie di sessione Google è ancora valido nel browser.
-             // La vera magia avviene quando startAutoSync prova a chiamare le API.
-        }
-        resolve();
-    }
-}
 
 export const isCalendarConnected = (): boolean => {
   return localStorage.getItem('courtmaster_gcal_token') === 'true';
@@ -234,8 +258,9 @@ export const listGoogleCalendars = async (): Promise<{id: string, summary: strin
     // Check if client is ready
     if (!gapi || !gapi.client) return []; 
     
-    // Lista calendari richiede AUTH. Non può essere fatta da guest.
+    // Lista calendari richiede AUTH.
     if (gapi.client.getToken() === null) {
+        // Se pensiamo di essere connessi ma non abbiamo il token, forse il restore è fallito o non ancora avvenuto
         return [];
     }
 
@@ -284,8 +309,6 @@ export const stopAutoSync = () => {
 
 const handleAuthError = () => {
     console.warn("Sessione Google scaduta o invalida.");
-    // Non disconnettiamo brutalmente per evitare UX negative ai guest,
-    // ma sappiamo che le chiamate private falliranno.
 };
 
 export const syncGoogleEventsToFirebase = async (calendarIds: string[] = [], silent = false) => {
@@ -366,12 +389,9 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = [], sil
             } catch (e: any) {
                 // Gestione specifica errori
                 if (e.status === 401 || e.status === 403) {
-                     // 401: Non autorizzato (serve login)
-                     // 403: Forbidden (calendario privato non accessibile con API Key)
                      if (!silent) console.warn(`Impossibile leggere calendario ${calId} (Privato/No Auth)`);
                      hasReadErrors = true;
                 } else if (e.status === 404) {
-                    // Ignoriamo 404 silenziosamente per evitare panico utente
                     if (!silent) console.warn(`Calendario non trovato: ${calId}`);
                 } else {
                     console.warn(`Errore generico lettura calendario ${calId}:`, e);
@@ -379,13 +399,11 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = [], sil
             }
         }
 
-        // Se non siamo riusciti a leggere nulla (es. utente guest e calendario privato), usciamo senza cancellare i dati vecchi per sicurezza
         if (allGoogleEvents.length === 0 && hasReadErrors) {
             return 0;
         }
 
         // 2. Pulisci vecchi eventi importati SU FIREBASE
-        // ATTENZIONE: Facciamo pulizia solo se abbiamo letto qualcosa con successo, o se siamo sicuri che non ci siano eventi
         if (allGoogleEvents.length > 0 || (!hasReadErrors && targetCalendars.length > 0)) {
             const q = query(collection(db, BOOKING_COLLECTION), where("sportName", "==", "EXTERNAL_BUSY"));
             const snapshot = await getDocs(q);
@@ -433,8 +451,6 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = [], sil
 export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primary'): Promise<number> => {
     const gapi = (window as any).gapi;
     if (!gapi || !gapi.client || gapi.client.getToken() === null) {
-        // Se non siamo connessi, non lanciamo errore, ma ritorniamo 0.
-        // Questo permette chiamate "safe" in background.
         return 0;
     }
 
@@ -494,7 +510,6 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
         } catch (error: any) {
             if (error.status === 401) {
                 handleAuthError();
-                // Se auth fallisce, interrompiamo il loop
                 break;
             }
             console.error(`Errore export prenotazione ${booking.customerName}:`, error);

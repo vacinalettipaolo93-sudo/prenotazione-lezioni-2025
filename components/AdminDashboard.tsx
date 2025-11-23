@@ -117,6 +117,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       try {
           const cals = await listGoogleCalendars();
           setUserCalendars(cals);
+          if (cals.length === 0 && isCalendarConnected()) {
+              // Se siamo connessi ma non vediamo calendari, potrebbe essere un problema di sync temporaneo
+          }
       } catch (e: any) {
           console.error("Could not list calendars", e);
           if (e.status === 401) setIsConnected(false);
@@ -146,6 +149,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const handleDisconnect = () => {
     disconnectGoogleCalendar();
     setIsConnected(false);
+    setUserCalendars([]);
     refreshEvents();
   };
 
@@ -329,23 +333,37 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
              
              {isConnected && (
                  <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
-                     <h3 className="font-bold text-white mb-4">Calendari "Occupati" (Import)</h3>
+                     <div className="flex justify-between items-center mb-4">
+                         <h3 className="font-bold text-white">Calendari "Occupati" (Import)</h3>
+                         <button onClick={fetchUserCalendars} disabled={loadingCalendars} className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1">
+                             <svg className={`w-4 h-4 ${loadingCalendars ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                             Aggiorna Lista
+                         </button>
+                     </div>
+                     
                      {loadingCalendars ? <p className="text-slate-400">Caricamento calendari...</p> : (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-h-40 overflow-y-auto">
-                            {userCalendars.map(cal => (
-                                <label key={cal.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${selectedCalendarIds.includes(cal.id) ? 'bg-indigo-900/20 border-indigo-500/50' : 'bg-slate-900 border-slate-700 hover:border-slate-600'}`}>
-                                    <input 
-                                    type="checkbox" 
-                                    checked={selectedCalendarIds.includes(cal.id)}
-                                    onChange={() => handleToggleCalendar(cal.id)}
-                                    className="rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-800"
-                                    />
-                                    <div className="overflow-hidden">
-                                        <div className="font-medium text-sm text-white truncate">{cal.summary}</div>
-                                    </div>
-                                </label>
-                            ))}
-                        </div>
+                        userCalendars.length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-h-40 overflow-y-auto">
+                                {userCalendars.map(cal => (
+                                    <label key={cal.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${selectedCalendarIds.includes(cal.id) ? 'bg-indigo-900/20 border-indigo-500/50' : 'bg-slate-900 border-slate-700 hover:border-slate-600'}`}>
+                                        <input 
+                                        type="checkbox" 
+                                        checked={selectedCalendarIds.includes(cal.id)}
+                                        onChange={() => handleToggleCalendar(cal.id)}
+                                        className="rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-800"
+                                        />
+                                        <div className="overflow-hidden">
+                                            <div className="font-medium text-sm text-white truncate">{cal.summary}</div>
+                                        </div>
+                                    </label>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-center py-4 bg-slate-900/30 rounded-lg border border-slate-800">
+                                <p className="text-slate-400 text-sm mb-2">Nessun calendario trovato o sessione scaduta.</p>
+                                <Button onClick={handleConnectCalendar} variant="ghost" className="text-xs">Riconnetti Account</Button>
+                            </div>
+                        )
                      )}
                  </div>
              )}
