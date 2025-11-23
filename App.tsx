@@ -72,8 +72,8 @@ const App: React.FC = () => {
           <div className="flex justify-between h-20">
             <div className="flex items-center cursor-pointer group" onClick={() => setView('booking')}>
               <div className="flex-shrink-0 flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 transition-all">C</div>
-                <span className="font-bold text-xl text-white tracking-tight group-hover:text-indigo-200 transition-colors">CourtMaster AI</span>
+                <div className="w-10 h-10 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 transition-all">G</div>
+                <span className="font-bold text-xl text-white tracking-tight group-hover:text-indigo-200 transition-colors">Gestionale Prenotazioni</span>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -107,7 +107,7 @@ const App: React.FC = () => {
       
       <footer className="relative z-10 border-t border-slate-800/50 bg-slate-950/50 text-slate-500 py-10 mt-auto">
          <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-6">
-            <p className="text-sm font-medium">&copy; 2024 CourtMaster AI. <span className="opacity-50">Powered by Gemini & Firebase.</span></p>
+            <p className="text-sm font-medium">&copy; 2024 Gestionale Prenotazioni. <span className="opacity-50">Powered by Gemini & Firebase.</span></p>
             
             {/* Discreet Admin Access in Footer */}
             <button 

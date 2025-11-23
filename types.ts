@@ -93,6 +93,7 @@ export interface Booking {
   
   customerName: string;
   customerEmail: string;
+  customerPhone?: string; // Nuovo campo telefono
   skillLevel: 'Beginner' | 'Intermediate' | 'Advanced';
   notes?: string;
   

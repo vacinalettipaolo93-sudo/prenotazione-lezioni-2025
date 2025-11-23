@@ -19,6 +19,7 @@ let bookingListeners: ((bookings: Booking[]) => void)[] = [];
 let tokenClient: any;
 let gapiInited = false;
 let gisInited = false;
+let autoSyncInterval: any = null;
 
 // --- REAL-TIME SUBSCRIPTION ---
 
@@ -143,6 +144,7 @@ export const initGoogleClient = async (): Promise<void> => {
 
         if (!gapi || !google) {
             console.error("Google Scripts not loaded");
+            resolve();
             return;
         }
 
@@ -156,18 +158,29 @@ export const initGoogleClient = async (): Promise<void> => {
             } catch (e) {
               console.error("Errore GAPI Init:", e);
             }
-            if (gisInited) resolve();
+            checkInitComplete(resolve);
         });
 
         tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: CLIENT_ID,
             scope: SCOPES,
-            callback: '',
+            callback: '', // Defined later
         });
         gisInited = true;
-        if (gapiInited) resolve();
+        checkInitComplete(resolve);
     });
 };
+
+const checkInitComplete = (resolve: any) => {
+    if (gapiInited && gisInited) {
+        // Se eravamo connessi, proviamo a ripristinare o fare sync automatico
+        if (localStorage.getItem('courtmaster_gcal_token') === 'true') {
+             // Proviamo un sync silenzioso, se fallisce (401) lo gestirà il chiamante
+             startAutoSync();
+        }
+        resolve();
+    }
+}
 
 export const isCalendarConnected = (): boolean => {
   return localStorage.getItem('courtmaster_gcal_token') === 'true';
@@ -188,9 +201,10 @@ export const connectGoogleCalendar = async (): Promise<boolean> => {
       }
       const gapi = (window as any).gapi;
       if (gapi && gapi.client) {
-          gapi.client.setToken(resp);
+          // Il token è gestito internamente da gapi client dopo questa call
       }
       localStorage.setItem('courtmaster_gcal_token', 'true');
+      startAutoSync(); // Avvia sync automatico
       resolve(true);
     };
 
@@ -203,6 +217,7 @@ export const connectGoogleCalendar = async (): Promise<boolean> => {
 };
 
 export const disconnectGoogleCalendar = () => {
+  stopAutoSync();
   const google = (window as any).google;
   const gapi = (window as any).gapi;
   if(google) {
@@ -218,7 +233,8 @@ export const disconnectGoogleCalendar = () => {
 
 export const listGoogleCalendars = async (): Promise<{id: string, summary: string, primary?: boolean}[]> => {
     const gapi = (window as any).gapi;
-    if (!gapi || !gapi.client) throw new Error("Google API non pronte");
+    // Check if client is ready
+    if (!gapi || !gapi.client) return []; 
     
     try {
         const response = await gapi.client.calendar.calendarList.list();
@@ -227,32 +243,77 @@ export const listGoogleCalendars = async (): Promise<{id: string, summary: strin
             summary: item.summary,
             primary: item.primary
         }));
-    } catch (error) {
+    } catch (error: any) {
+        if (error.status === 401) {
+            handleAuthError();
+        }
         console.error("Errore lista calendari:", error);
         throw error;
     }
 }
 
-export const syncGoogleEventsToFirebase = async (calendarIds: string[] = ['primary']) => {
-    const gapi = (window as any).gapi;
-    if (!gapi || !gapi.client || gapi.client.getToken() === null) {
-        throw new Error("Devi connettere il calendario prima di sincronizzare.");
+// --- AUTO SYNC LOGIC ---
+
+export const startAutoSync = () => {
+    if (autoSyncInterval) clearInterval(autoSyncInterval);
+    
+    console.log("Avvio Auto-Sync Google Calendar...");
+    // Primo sync immediato
+    syncGoogleEventsToFirebase(undefined, true).catch(() => {});
+
+    // Sync ogni 5 minuti
+    autoSyncInterval = setInterval(() => {
+        if (isCalendarConnected()) {
+            console.log("Esecuzione Auto-Sync periodico...");
+            syncGoogleEventsToFirebase(undefined, true).catch(err => console.warn("Auto-sync fallito", err));
+        }
+    }, 5 * 60 * 1000); 
+};
+
+export const stopAutoSync = () => {
+    if (autoSyncInterval) {
+        clearInterval(autoSyncInterval);
+        autoSyncInterval = null;
     }
+}
+
+const handleAuthError = () => {
+    console.warn("Sessione Google scaduta. Disconnessione forzata.");
+    disconnectGoogleCalendar();
+    // Non facciamo alert aggressivi, l'UI si aggiornerà
+};
+
+export const syncGoogleEventsToFirebase = async (calendarIds: string[] = ['primary'], silent = false) => {
+    const gapi = (window as any).gapi;
+    if (!gapi || !gapi.client) {
+         if (!silent) throw new Error("GAPI non pronto");
+         return 0;
+    }
+    
+    // Se non abbiamo token, proviamo a richiederlo silenziosamente o usciamo
+    if (gapi.client.getToken() === null) {
+         if (!silent) throw new Error("Devi connettere il calendario.");
+         return 0;
+    }
+
+    const config = getAppConfig();
+    const targetCalendars = calendarIds || config.importBusyCalendars || ['primary'];
 
     const now = new Date();
     const nextMonth = new Date();
     nextMonth.setDate(nextMonth.getDate() + 30);
 
     try {
+        // 1. Pulisci vecchi eventi importati
         const q = query(collection(db, BOOKING_COLLECTION), where("sportName", "==", "EXTERNAL_BUSY"));
         const snapshot = await getDocs(q);
         const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, BOOKING_COLLECTION, d.id)));
         await Promise.all(deletePromises);
 
+        // 2. Scarica nuovi eventi
         let allGoogleEvents: any[] = [];
-        const safeCalendarIds = (calendarIds && calendarIds.length > 0) ? calendarIds : ['primary'];
-
-        for (const calId of safeCalendarIds) {
+        
+        for (const calId of targetCalendars) {
             try {
                 const response = await gapi.client.calendar.events.list({
                     'calendarId': calId,
@@ -265,11 +326,16 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = ['prima
                 if (response.result.items) {
                     allGoogleEvents = [...allGoogleEvents, ...response.result.items];
                 }
-            } catch (e) {
+            } catch (e: any) {
+                if (e.status === 401) {
+                    handleAuthError();
+                    throw e;
+                }
                 console.warn(`Impossibile leggere calendario ${calId}:`, e);
             }
         }
 
+        // 3. Salva su Firebase
         const addPromises = allGoogleEvents.map((ev: any) => {
             if (!ev.start.dateTime) return Promise.resolve(); 
             
@@ -299,7 +365,7 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = ['prima
         return allGoogleEvents.length;
 
     } catch (error) {
-        console.error("Errore Sync Google:", error);
+        if (!silent) console.error("Errore Sync Google:", error);
         throw error;
     }
 };
@@ -336,7 +402,7 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
             const event = {
                 'summary': `🎾 ${booking.sportName}: ${booking.customerName}`,
                 'location': booking.locationName,
-                'description': `Cliente: ${booking.customerName} (${booking.customerEmail})\nTipo: ${booking.lessonTypeName || 'Standard'}\nLivello: ${booking.skillLevel}\nNote: ${booking.notes || 'Nessuna'}\n\nPiano AI: ${booking.aiLessonPlan?.substring(0, 100)}...`,
+                'description': `Cliente: ${booking.customerName} (${booking.customerEmail})\nTelefono: ${booking.customerPhone || 'N/A'}\nTipo: ${booking.lessonTypeName || 'Standard'}\nLivello: ${booking.skillLevel}\nNote: ${booking.notes || 'Nessuna'}\n\nPiano AI: ${booking.aiLessonPlan?.substring(0, 100)}...`,
                 'start': {
                     'dateTime': booking.startTime, 
                 },
@@ -359,7 +425,11 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
                 successCount++;
             }
 
-        } catch (error) {
+        } catch (error: any) {
+            if (error.status === 401) {
+                handleAuthError();
+                throw error;
+            }
             console.error(`Errore export prenotazione ${booking.customerName}:`, error);
         }
     }

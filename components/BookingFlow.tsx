@@ -27,6 +27,7 @@ const BookingFlow: React.FC = () => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    phone: '',
     level: 'Beginner' as Booking['skillLevel'],
     notes: ''
   });
@@ -102,6 +103,7 @@ const BookingFlow: React.FC = () => {
           startTime: selectedSlot.startTime,
           customerName: formData.name,
           customerEmail: formData.email,
+          customerPhone: formData.phone,
           skillLevel: formData.level,
           notes: formData.notes,
           aiLessonPlan: aiPlan
@@ -111,6 +113,12 @@ const BookingFlow: React.FC = () => {
       setConfirmedBooking(newBooking);
       setIsSubmitting(false);
       setCurrentStep(4); // Success Step
+  };
+
+  const levelLabels: Record<string, string> = {
+      'Beginner': 'Principiante',
+      'Intermediate': 'Intermedio',
+      'Advanced': 'Avanzato'
   };
 
   // --- STEP 0: SPORT SELECTION ---
@@ -284,23 +292,54 @@ const BookingFlow: React.FC = () => {
                 <h2 className="text-2xl font-bold text-white mb-6">I tuoi Dati</h2>
                 <div className="space-y-5">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                        <input type="text" className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="Nome Completo" />
-                        <input type="email" className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} placeholder="Email" />
+                        <input 
+                            type="text" 
+                            className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white focus:border-indigo-500 outline-none" 
+                            value={formData.name} 
+                            onChange={e => setFormData({...formData, name: e.target.value})} 
+                            placeholder="Nome Completo" 
+                        />
+                        <input 
+                            type="tel" 
+                            className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white focus:border-indigo-500 outline-none" 
+                            value={formData.phone} 
+                            onChange={e => setFormData({...formData, phone: e.target.value})} 
+                            placeholder="Numero di Telefono" 
+                        />
+                         <input 
+                            type="email" 
+                            className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white focus:border-indigo-500 outline-none md:col-span-2" 
+                            value={formData.email} 
+                            onChange={e => setFormData({...formData, email: e.target.value})} 
+                            placeholder="Email" 
+                        />
                     </div>
                     <div>
-                         <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Livello</label>
+                         <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Livello di Gioco</label>
                          <div className="grid grid-cols-3 gap-3">
                              {['Beginner', 'Intermediate', 'Advanced'].map(level => (
-                                 <button key={level} onClick={() => setFormData({...formData, level: level as any})} className={`py-3 rounded-xl text-sm font-medium border ${formData.level === level ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-900 text-slate-400 border-slate-700'}`}>{level}</button>
+                                 <button key={level} onClick={() => setFormData({...formData, level: level as any})} className={`py-3 rounded-xl text-sm font-medium border ${formData.level === level ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-900 text-slate-400 border-slate-700'}`}>
+                                     {levelLabels[level]}
+                                 </button>
                              ))}
                          </div>
                     </div>
-                    <textarea className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white min-h-[100px]" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} placeholder="Note aggiuntive..." />
+                    <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Note Aggiuntive</label>
+                        <textarea className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white min-h-[100px] focus:border-indigo-500 outline-none mb-2" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} placeholder="Es. Ho bisogno di racchette..." />
+                        
+                        {/* IMPORTANT WARNING MESSAGE */}
+                        <div className="p-4 mt-2 border-2 border-amber-400/30 bg-amber-500/10 rounded-xl text-center">
+                            <p className="font-extrabold text-amber-400 text-sm md:text-base uppercase tracking-wide leading-relaxed">
+                                COMUNICA SU WHATSAPP LA PRENOTAZIONE DELLA LEZIONE, LA LEZIONE VERRA' CONFERMATA DOPO LA VERIFICA DELLA DISPONIBILITA' DEL CAMPO
+                            </p>
+                        </div>
+                    </div>
                 </div>
             </div>
 
              <div className="flex justify-center pt-4">
-                <Button disabled={!formData.name || !formData.email} onClick={handleConfirm} isLoading={isSubmitting} className="w-full md:w-auto md:min-w-[250px] py-4 text-lg">Conferma Prenotazione</Button>
+                <Button disabled={!formData.name || !formData.email || !formData.phone} onClick={handleConfirm} isLoading={isSubmitting} className="w-full md:w-auto md:min-w-[250px] py-4 text-lg">Conferma Prenotazione</Button>
             </div>
           </div>
       );
@@ -311,8 +350,8 @@ const BookingFlow: React.FC = () => {
       return (
           <div className="text-center py-10 animate-in zoom-in duration-500">
               <div className="w-24 h-24 bg-emerald-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-emerald-500/30">✓</div>
-              <h2 className="text-4xl font-bold text-white mb-2">Prenotazione Confermata!</h2>
-              <div className="bg-slate-800/80 backdrop-blur rounded-2xl border border-slate-700 p-8 max-w-2xl mx-auto text-left shadow-2xl mt-8">
+              <h2 className="text-4xl font-bold text-white mb-2">Richiesta Inviata!</h2>
+              <div className="bg-slate-800/80 backdrop-blur rounded-2xl border border-slate-700 p-8 max-w-2xl mx-auto text-left shadow-2xl mt-8 relative overflow-hidden">
                   <div className="font-bold text-white text-lg mb-4">{new Date(confirmedBooking.date).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long'})} alle {new Date(confirmedBooking.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
                   <div className="text-slate-300 mb-6">
                       {confirmedBooking.sportName} - {confirmedBooking.locationName}<br/>
@@ -320,6 +359,12 @@ const BookingFlow: React.FC = () => {
                   </div>
                   <div className="prose prose-invert prose-sm max-w-none bg-slate-900/50 p-6 rounded-xl border border-slate-700/50">
                      {generatedPlan.split('\n').map((line, i) => <p key={i} className={line.startsWith('**') ? 'font-bold text-white mt-4' : 'text-slate-300'}>{line.replace(/\*\*/g, '')}</p>)}
+                  </div>
+
+                  <div className="mt-8 pt-6 border-t border-slate-700 text-center">
+                       <p className="font-bold text-amber-400 uppercase text-sm tracking-wide leading-relaxed">
+                            COMUNICA SU WHATSAPP LA PRENOTAZIONE DELLA LEZIONE, LA LEZIONE VERRA' CONFERMATA DOPO LA VERIFICA DELLA DISPONIBILITA' DEL CAMPO
+                       </p>
                   </div>
               </div>
               <Button variant="outline" onClick={() => window.location.reload()} className="mt-10">Torna alla Home</Button>

@@ -1,8 +1,8 @@
-
 import React, { useState, useEffect } from 'react';
 import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport, LessonType } from '../types';
 import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase, exportBookingsToGoogle, getBookings, listGoogleCalendars } from '../services/calendarService';
-import { getAppConfig, addSport, updateSport, removeSport, addSportLocation, updateSportLocation, removeSportLocation, addSportLessonType, removeSportLessonType, addSportDuration, removeSportDuration, updateHomeConfig, updateMinBookingNotice, initConfigListener, updateImportBusyCalendars } from '../services/configService';
+import { getAppConfig, addSport, updateSport, removeSport, addSportLocation, updateSportLocation, removeSportLocation, addSportLessonType, removeSportLessonType, addSportDuration, removeSportDuration, updateHomeConfig, updateMinBookingNotice, initConfigListener, updateImportBusyCalendars, addSportLessonType as updateSportLessonTypeRef } from '../services/configService';
+// Note: importing updateSportLessonTypeRef just to access config logic, but we'll manually implement updates in UI via updateSport
 import { logout } from '../services/authService';
 import Button from './Button';
 
@@ -18,8 +18,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [config, setConfig] = useState<AppConfig>(getAppConfig());
-  const [publicLinkCopied, setPublicLinkCopied] = useState(false);
-
+  
   // Calendar State
   const [userCalendars, setUserCalendars] = useState<{id: string, summary: string, primary?: boolean}[]>([]);
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
@@ -51,7 +50,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [editingSlotInterval, setEditingSlotInterval] = useState<30 | 60>(60);
 
   useEffect(() => {
-    initGoogleClient();
+    const init = async () => {
+        await initGoogleClient();
+        setIsConnected(isCalendarConnected());
+        // Se siamo connessi, fetch calendari immediato
+        if (isCalendarConnected()) {
+            fetchUserCalendars();
+        }
+    };
+    init();
     
     const unsub = initConfigListener((newConfig) => {
         setConfig(newConfig);
@@ -68,8 +75,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     return () => unsub();
   }, []);
 
+  // Ensure user calendars are loaded if connection status changes
   useEffect(() => {
-      if (isConnected) {
+      if (isConnected && userCalendars.length === 0) {
           fetchUserCalendars();
       }
   }, [isConnected]);
@@ -109,8 +117,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       try {
           const cals = await listGoogleCalendars();
           setUserCalendars(cals);
-      } catch (e) {
+      } catch (e: any) {
           console.error("Could not list calendars", e);
+          if (e.status === 401) setIsConnected(false);
       } finally {
           setLoadingCalendars(false);
       }
@@ -121,6 +130,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     try {
         await connectGoogleCalendar();
         setIsConnected(true);
+        fetchUserCalendars();
     } catch (e: any) {
         if (e && e.error === 'access_denied') {
             alert("ACCESSO NEGATO: Aggiungi la tua email ai Test Users in Google Cloud Console.");
@@ -208,6 +218,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       updateSportLocation(sportId, locId, updates);
   }
 
+  const handleUpdateLessonType = (sportId: string, typeId: string, newName: string) => {
+     // Helper to update lesson type name inside the nested array
+     const sport = config.sports.find(s => s.id === sportId);
+     if (sport) {
+         const newTypes = sport.lessonTypes.map(t => t.id === typeId ? {...t, name: newName} : t);
+         updateSport(sportId, { lessonTypes: newTypes });
+     }
+  }
+
   const handleAddLessonType = (sportId: string) => {
       if(!newLessonType) return;
       addSportLessonType(sportId, newLessonType);
@@ -224,8 +243,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   // --- SCHEDULE ACTIONS ---
   const handleSaveSchedule = () => {
       if (!selectedScheduleSportId || !selectedScheduleLocId || !editingSchedule) return;
-      // We need a way to update schedule specifically. 
-      // We can reuse updateSportLocation for this since schedule is part of location
       updateSportLocation(selectedScheduleSportId, selectedScheduleLocId, {
           schedule: editingSchedule,
           slotInterval: editingSlotInterval
@@ -293,14 +310,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         <div className={`w-12 h-12 rounded-full flex items-center justify-center ${isConnected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-500'}`}>📅</div>
                         <div>
                             <h3 className="font-bold text-lg text-white">Google Calendar</h3>
-                            <p className="text-sm text-slate-400">{isConnected ? "Connesso" : "Disconnesso"}</p>
+                            <p className="text-sm text-slate-400 flex items-center gap-2">
+                                {isConnected ? "Connesso" : "Disconnesso"}
+                                {isConnected && <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 animate-pulse">Auto-Sync Attivo</span>}
+                            </p>
                         </div>
                     </div>
                     {!isConnected ? (
                         <Button onClick={handleConnectCalendar} isLoading={isConnecting}>Connetti</Button>
                     ) : (
                         <div className="flex gap-2">
-                             <Button onClick={handleSyncNow} isLoading={isSyncing} variant="secondary">Scarica Impegni</Button>
+                             <Button onClick={handleSyncNow} isLoading={isSyncing} variant="secondary">Sync Forzato</Button>
                              <Button onClick={handleExportToGoogle} isLoading={isExporting} variant="primary">Esporta Nuovi</Button>
                         </div>
                     )}
@@ -310,21 +330,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
              {isConnected && (
                  <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
                      <h3 className="font-bold text-white mb-4">Calendari "Occupati" (Import)</h3>
-                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-h-40 overflow-y-auto">
-                        {userCalendars.map(cal => (
-                            <label key={cal.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${selectedCalendarIds.includes(cal.id) ? 'bg-indigo-900/20 border-indigo-500/50' : 'bg-slate-900 border-slate-700 hover:border-slate-600'}`}>
-                                <input 
-                                type="checkbox" 
-                                checked={selectedCalendarIds.includes(cal.id)}
-                                onChange={() => handleToggleCalendar(cal.id)}
-                                className="rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-800"
-                                />
-                                <div className="overflow-hidden">
-                                    <div className="font-medium text-sm text-white truncate">{cal.summary}</div>
-                                </div>
-                            </label>
-                        ))}
-                     </div>
+                     {loadingCalendars ? <p className="text-slate-400">Caricamento calendari...</p> : (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-h-40 overflow-y-auto">
+                            {userCalendars.map(cal => (
+                                <label key={cal.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${selectedCalendarIds.includes(cal.id) ? 'bg-indigo-900/20 border-indigo-500/50' : 'bg-slate-900 border-slate-700 hover:border-slate-600'}`}>
+                                    <input 
+                                    type="checkbox" 
+                                    checked={selectedCalendarIds.includes(cal.id)}
+                                    onChange={() => handleToggleCalendar(cal.id)}
+                                    className="rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-800"
+                                    />
+                                    <div className="overflow-hidden">
+                                        <div className="font-medium text-sm text-white truncate">{cal.summary}</div>
+                                    </div>
+                                </label>
+                            ))}
+                        </div>
+                     )}
                  </div>
              )}
           </div>
@@ -391,15 +413,24 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                  <div className="space-y-3">
                                      <h5 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">Sedi & Calendari</h5>
                                      {sport.locations.map(loc => (
-                                         <div key={loc.id} className="bg-slate-800 p-3 rounded border border-slate-700 text-sm">
-                                             <div className="font-bold text-white flex justify-between">
-                                                 {loc.name}
-                                                 <button onClick={() => removeSportLocation(sport.id, loc.id)} className="text-red-400 hover:text-white">×</button>
+                                         <div key={loc.id} className="bg-slate-800 p-3 rounded border border-slate-700 text-sm space-y-2">
+                                             <div className="flex justify-between items-center">
+                                                 <input 
+                                                    className="bg-transparent border-b border-transparent hover:border-slate-600 focus:border-indigo-500 focus:outline-none font-bold text-white w-full"
+                                                    value={loc.name}
+                                                    onChange={(e) => handleUpdateLocation(sport.id, loc.id, {name: e.target.value})}
+                                                 />
+                                                 <button onClick={() => removeSportLocation(sport.id, loc.id)} className="text-red-400 hover:text-white ml-2">×</button>
                                              </div>
-                                             <div className="text-slate-500 text-xs mb-2">{loc.address}</div>
+                                             
+                                             <input 
+                                                className="bg-transparent border-b border-transparent hover:border-slate-600 focus:border-indigo-500 focus:outline-none text-slate-400 text-xs w-full"
+                                                value={loc.address}
+                                                onChange={(e) => handleUpdateLocation(sport.id, loc.id, {address: e.target.value})}
+                                             />
                                              
                                              <select 
-                                                className="w-full bg-slate-900 border border-slate-600 rounded text-xs text-slate-300 p-1"
+                                                className="w-full bg-slate-900 border border-slate-600 rounded text-xs text-slate-300 p-1 mt-2"
                                                 value={loc.googleCalendarId || ''}
                                                 onChange={(e) => handleUpdateLocation(sport.id, loc.id, { googleCalendarId: e.target.value })}
                                              >
@@ -422,7 +453,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                      <h5 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">Tipi Lezione</h5>
                                      {sport.lessonTypes.map(lt => (
                                          <div key={lt.id} className="bg-slate-800 p-2 rounded border border-slate-700 flex justify-between items-center text-sm text-white">
-                                             {lt.name}
+                                             <input 
+                                                className="bg-transparent border-b border-transparent hover:border-slate-600 focus:border-indigo-500 focus:outline-none text-white w-full mr-2"
+                                                value={lt.name}
+                                                onChange={(e) => handleUpdateLessonType(sport.id, lt.id, e.target.value)}
+                                             />
                                              <button onClick={() => removeSportLessonType(sport.id, lt.id)} className="text-red-400 hover:text-white">×</button>
                                          </div>
                                      ))}
@@ -481,15 +516,28 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                            <select 
                                 className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
                                 value={selectedScheduleSportId}
-                                onChange={(e) => setSelectedScheduleSportId(e.target.value)}
+                                onChange={(e) => {
+                                    const newSportId = e.target.value;
+                                    setSelectedScheduleSportId(newSportId);
+                                    // Automatically select first location of new sport
+                                    const sport = config.sports.find(s => s.id === newSportId);
+                                    if(sport && sport.locations.length > 0) {
+                                        setSelectedScheduleLocId(sport.locations[0].id);
+                                    } else {
+                                        setSelectedScheduleLocId('');
+                                    }
+                                }}
                             >
+                                <option value="" disabled>Seleziona Sport</option>
                                 {config.sports.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                             </select>
                             <select 
                                 className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
                                 value={selectedScheduleLocId}
                                 onChange={(e) => setSelectedScheduleLocId(e.target.value)}
+                                disabled={!selectedScheduleSportId}
                             >
+                                <option value="" disabled>Seleziona Sede</option>
                                 {config.sports.find(s => s.id === selectedScheduleSportId)?.locations.map(l => (
                                     <option key={l.id} value={l.id}>{l.name}</option>
                                 ))}
@@ -536,7 +584,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         </div>
                     </>
                    ) : (
-                       <div className="p-10 text-center text-slate-500">Seleziona uno sport e una sede che abbiano orari configurati.</div>
+                       <div className="p-10 text-center text-slate-500">Seleziona uno sport e una sede per configurare gli orari.</div>
                    )}
                </div>
           </div>
