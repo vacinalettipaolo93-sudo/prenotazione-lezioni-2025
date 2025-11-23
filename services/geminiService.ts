@@ -2,6 +2,8 @@ import { GoogleGenAI } from "@google/genai";
 import { LessonPlanRequest } from "../types";
 
 // API Key fornita dall'utente
+// NOTA: Se ricevi errori "PermissionDenied" o 403, verifica che questa chiave 
+// abbia "Generative Language API" abilitata in Google Cloud Console.
 const API_KEY = 'AIzaSyAv_qusWIgR7g2C1w1MeLyCNQNghZg9sWA';
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
@@ -22,6 +24,7 @@ export const generateLessonPlan = async (request: LessonPlanRequest): Promise<st
       Tono: Motivante e professionale. Rispondi in Italiano.
     `;
 
+    // Utilizziamo gemini-2.5-flash per task testuali rapidi
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
@@ -30,18 +33,23 @@ export const generateLessonPlan = async (request: LessonPlanRequest): Promise<st
       }
     });
 
-    return response.text || "Impossibile generare il piano di lezione al momento.";
-  } catch (error) {
-    console.error("Gemini API Error:", error);
-    return "Si è verificato un errore durante la generazione del piano di lezione con l'IA.";
+    return response.text || "Piano generato parzialmente.";
+  } catch (error: any) {
+    console.error("Gemini API Error - Dettagli:", error);
+    
+    // Messaggio utente più specifico se è un problema di chiave
+    if (error.status === 403 || (error.message && error.message.includes('API key'))) {
+         return "Errore Configurazione: La chiave API non ha i permessi per l'IA (Generative Language API).";
+    }
+
+    return "L'IA sta riposando. Il piano di lezione sarà creato direttamente in campo!";
   }
 };
 
 export const suggestAvailabilitySummary = async (slots: number): Promise<string> => {
-    // Uses Gemini to generate a friendly message about availability
     const prompt = `
         Ho ${slots} slot liberi per lezioni di tennis/padel oggi.
-        Genera una breve frase accattivante (max 15 parole) per invitare gli studenti a prenotare subito, sottolineando l'urgenza se sono pochi o l'opportunità se sono tanti. In Italiano.
+        Genera una breve frase accattivante (max 15 parole) per invitare gli studenti a prenotare subito. In Italiano.
     `;
 
     try {
@@ -51,6 +59,7 @@ export const suggestAvailabilitySummary = async (slots: number): Promise<string>
         });
         return response.text || "Prenota ora la tua lezione!";
     } catch (e) {
+        // Fallback silenzioso per la summary
         return "Prenota ora la tua lezione!";
     }
 }

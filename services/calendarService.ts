@@ -137,52 +137,37 @@ export const getAvailableSlots = (date: Date, durationMinutes: number, sportId: 
 
 // --- GOOGLE CALENDAR INTEGRATION (REAL) ---
 
+const waitForGoogleScripts = (): Promise<void> => {
+    return new Promise((resolve) => {
+        const check = () => {
+            if ((window as any).google && (window as any).gapi) {
+                resolve();
+            } else {
+                setTimeout(check, 100);
+            }
+        };
+        check();
+    });
+};
+
 export const initGoogleClient = async (): Promise<void> => {
-    // Singleton pattern per evitare inizializzazioni multiple concorrenti
     if (initPromise) return initPromise;
 
-    initPromise = new Promise((resolve) => {
+    initPromise = new Promise(async (resolve) => {
+        await waitForGoogleScripts();
+        
         const gapi = (window as any).gapi;
         const google = (window as any).google;
 
-        if (!gapi || !google) {
-            console.error("Google Scripts not loaded");
-            resolve();
-            return;
-        }
+        // 1. Initialize Identity Service (Token Client) FIRST
+        tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: CLIENT_ID,
+            scope: SCOPES,
+            callback: '', // Defined dynamically
+        });
+        gisInited = true;
 
-        const checkInitComplete = () => {
-            if (gapiInited && gisInited) {
-                // AUTO-RESTORE SESSION
-                const wasConnected = localStorage.getItem('courtmaster_gcal_token') === 'true';
-                if (wasConnected && tokenClient) {
-                     console.log("Tentativo ripristino sessione Google...");
-                     // Impostiamo una callback temporanea per il refresh silenzioso
-                     const originalCallback = tokenClient.callback;
-                     tokenClient.callback = (resp: any) => {
-                         if (resp.error) {
-                             console.warn("Ripristino sessione fallito:", resp);
-                             // Non slogghiamo brutalmente, ma l'utente vedrà disconnesso se prova a fare operazioni
-                         } else {
-                             console.log("Sessione Google ripristinata con successo.");
-                         }
-                         resolve();
-                     };
-
-                     try {
-                        // prompt: '' forza un refresh token silenzioso se il cookie Google è valido
-                        tokenClient.requestAccessToken({prompt: ''});
-                     } catch(e) {
-                         console.warn("Errore durante richiesta token silenziosa:", e);
-                         tokenClient.callback = originalCallback;
-                         resolve();
-                     }
-                } else {
-                    resolve();
-                }
-            }
-        };
-
+        // 2. Initialize GAPI Client
         gapi.load('client', async () => {
             try {
               await gapi.client.init({
@@ -190,19 +175,37 @@ export const initGoogleClient = async (): Promise<void> => {
                   discoveryDocs: [DISCOVERY_DOC],
               });
               gapiInited = true;
+
+              // 3. ONLY AFTER BOTH ARE READY -> Attempt Restore
+              const wasConnected = localStorage.getItem('courtmaster_gcal_token') === 'true';
+              if (wasConnected) {
+                  console.log("Ripristino sessione Google in corso...");
+                  try {
+                       // Override callback temporary for silent restore
+                       const originalCallback = tokenClient.callback;
+                       tokenClient.callback = (resp: any) => {
+                           if (resp.error) {
+                               console.warn("Silent restore failed:", resp);
+                           } else {
+                               console.log("Sessione Google ripristinata.");
+                           }
+                           resolve();
+                       };
+                       // Request with empty prompt for silent refresh
+                       tokenClient.requestAccessToken({prompt: ''});
+                  } catch (e) {
+                      console.warn("Errore token restore:", e);
+                      resolve();
+                  }
+              } else {
+                  resolve();
+              }
+
             } catch (e) {
               console.error("Errore GAPI Init:", e);
+              resolve();
             }
-            checkInitComplete();
         });
-
-        tokenClient = google.accounts.oauth2.initTokenClient({
-            client_id: CLIENT_ID,
-            scope: SCOPES,
-            callback: '', // Defined dynamically
-        });
-        gisInited = true;
-        checkInitComplete();
     });
     
     return initPromise;
@@ -215,8 +218,16 @@ export const isCalendarConnected = (): boolean => {
 export const connectGoogleCalendar = async (): Promise<boolean> => {
   return new Promise((resolve, reject) => {
     if (!tokenClient) {
-        alert("Configurazione Google incompleta. Ricarica la pagina.");
-        reject(false);
+        // Retry logic: if called too early, try waiting a moment
+        console.warn("TokenClient not ready, retrying...");
+        setTimeout(() => {
+             if(tokenClient) {
+                 connectGoogleCalendar().then(resolve).catch(reject);
+             } else {
+                 alert("Configurazione Google non ancora caricata. Riprova tra un istante.");
+                 reject(false);
+             }
+        }, 1000);
         return;
     }
 
