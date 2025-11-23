@@ -115,6 +115,54 @@ const BookingFlow: React.FC = () => {
       setCurrentStep(4); // Success Step
   };
 
+  // --- CALENDAR EXPORT HELPERS ---
+  const getCalendarDates = (booking: Booking) => {
+      const start = new Date(booking.startTime);
+      const end = new Date(start.getTime() + booking.durationMinutes * 60000);
+      return {
+          start: start.toISOString().replace(/-|:|\.\d\d\d/g, ""),
+          end: end.toISOString().replace(/-|:|\.\d\d\d/g, "")
+      };
+  };
+
+  const addToGoogleCalendar = () => {
+      if (!confirmedBooking) return;
+      const { start, end } = getCalendarDates(confirmedBooking);
+      const url = new URL('https://calendar.google.com/calendar/render');
+      url.searchParams.append('action', 'TEMPLATE');
+      url.searchParams.append('text', `Lezione ${confirmedBooking.sportName}: ${confirmedBooking.lessonTypeName}`);
+      url.searchParams.append('dates', `${start}/${end}`);
+      url.searchParams.append('details', `Prenotazione confermata.\n\nNote: ${confirmedBooking.notes || 'Nessuna'}\n\nPiano Lezione:\n${generatedPlan}`);
+      url.searchParams.append('location', confirmedBooking.locationName);
+      window.open(url.toString(), '_blank');
+  };
+
+  const downloadIcsFile = () => {
+      if (!confirmedBooking) return;
+      const { start, end } = getCalendarDates(confirmedBooking);
+      const icsContent = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//GestionalePrenotazioni//IT
+BEGIN:VEVENT
+UID:${confirmedBooking.id}@gestionaleprenotazioni.app
+DTSTAMP:${new Date().toISOString().replace(/-|:|\.\d\d\d/g, "")}
+DTSTART:${start}
+DTEND:${end}
+SUMMARY:Lezione ${confirmedBooking.sportName} - ${confirmedBooking.lessonTypeName}
+DESCRIPTION:Prenotazione confermata. Note: ${confirmedBooking.notes || 'Nessuna'}
+LOCATION:${confirmedBooking.locationName}
+END:VEVENT
+END:VCALENDAR`;
+
+      const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = window.URL.createObjectURL(blob);
+      link.setAttribute('download', `prenotazione_${confirmedBooking.sportName}.ics`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
   const levelLabels: Record<string, string> = {
       'Beginner': 'Principiante',
       'Intermediate': 'Intermedio',
@@ -389,6 +437,25 @@ const BookingFlow: React.FC = () => {
                       {confirmedBooking.sportName} - {confirmedBooking.locationName}<br/>
                       {confirmedBooking.lessonTypeName} ({confirmedBooking.durationMinutes} min)
                   </div>
+                  
+                  {/* Calendar Buttons */}
+                  <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                      <button 
+                        onClick={addToGoogleCalendar}
+                        className="flex-1 py-2 px-4 rounded-xl border border-slate-600 bg-slate-700 hover:bg-slate-600 text-white font-medium flex items-center justify-center gap-2 transition-colors"
+                      >
+                         <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 2C16.92 2 20.5 5.58 20.5 10C20.5 14.42 16.92 18 12.5 18C8.08 18 4.5 14.42 4.5 10C4.5 5.58 8.08 2 12.5 2M12.5 20C16.64 20 20 23.36 20 27.5C20 31.64 16.64 35 12.5 35C8.36 35 5 31.64 5 27.5C5 23.36 8.36 20 12.5 20M12.5 22C9.46 22 7 24.46 7 27.5C7 30.54 9.46 33 12.5 33C15.54 33 18 30.54 18 27.5C18 24.46 15.54 22 12.5 22Z" transform="scale(0.5)"/><path d="M19 4H18V2H16V4H8V2H6V4H5C3.89 4 3 4.9 3 6V20C3 21.1 3.89 22 5 22H19C20.1 22 21 21.1 21 20V6C21 4.9 20.1 4 19 4ZM19 20H5V10H19V20ZM19 8H5V6H19V8Z"/></svg>
+                         Aggiungi a Google Calendar
+                      </button>
+                      <button 
+                        onClick={downloadIcsFile}
+                        className="flex-1 py-2 px-4 rounded-xl border border-slate-600 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-medium flex items-center justify-center gap-2 transition-colors"
+                      >
+                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                         Scarica iCal / Outlook
+                      </button>
+                  </div>
+
                   <div className="prose prose-invert prose-sm max-w-none bg-slate-900/50 p-6 rounded-xl border border-slate-700/50">
                      {generatedPlan.split('\n').map((line, i) => <p key={i} className={line.startsWith('**') ? 'font-bold text-white mt-4' : 'text-slate-300'}>{line.replace(/\*\*/g, '')}</p>)}
                   </div>
