@@ -33,16 +33,11 @@ export const generateLessonPlan = async (request: LessonPlanRequest): Promise<st
       }
     });
 
-    return response.text || "Piano generato parzialmente.";
+    return response.text || "";
   } catch (error: any) {
     console.error("Gemini API Error - Dettagli:", error);
-    
-    // Messaggio utente più specifico se è un problema di chiave
-    if (error.status === 403 || (error.message && error.message.includes('API key'))) {
-         return "Errore Configurazione: La chiave API non ha i permessi per l'IA (Generative Language API).";
-    }
-
-    return "L'IA sta riposando. Il piano di lezione sarà creato direttamente in campo!";
+    // In caso di errore, restituiamo stringa vuota per nascondere la sezione nell'UI
+    return "";
   }
 };
 

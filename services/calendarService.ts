@@ -98,7 +98,12 @@ export const getAvailableSlots = (date: Date, durationMinutes: number, sportId: 
   const interval = location.slotInterval; 
 
   const now = new Date();
-  const minNoticeMinutes = config.minBookingNoticeMinutes || 0;
+  
+  // LOGICA PREAVVISO MINIMO
+  // Assicuriamo che sia un numero e non NaN
+  const minNoticeMinutes = Number(config.minBookingNoticeMinutes) || 0;
+  
+  // Calcolo tempo minimo consentito (Adesso + Minuti Preavviso)
   const earliestAllowedTime = new Date(now.getTime() + minNoticeMinutes * 60000);
 
   let currentSlotStart = new Date(dayStart);
@@ -120,6 +125,8 @@ export const getAvailableSlots = (date: Date, durationMinutes: number, sportId: 
           return (eventStart < slotEndTime && eventEnd > slotStartTime);
       });
 
+      // Controllo Preavviso:
+      // Lo slot è bloccato se il suo INIZIO è prima del tempo minimo consentito.
       const isTooSoon = currentSlotStart < earliestAllowedTime;
 
       slots.push({

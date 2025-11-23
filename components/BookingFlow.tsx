@@ -1,13 +1,14 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { TimeSlot, Booking, Sport, SportLocation, LessonType, LessonDuration } from '../types';
+import { TimeSlot, Booking, Sport, SportLocation, LessonType, LessonDuration, AppConfig } from '../types';
 import { getAvailableSlots, saveBooking } from '../services/calendarService';
-import { getAppConfig } from '../services/configService';
+import { getAppConfig, initConfigListener } from '../services/configService';
 import { generateLessonPlan, suggestAvailabilitySummary } from '../services/geminiService';
 import Button from './Button';
 
 const BookingFlow: React.FC = () => {
-  const config = getAppConfig(); 
+  // Use State for config to trigger re-renders when it updates
+  const [config, setConfig] = useState<AppConfig>(getAppConfig()); 
 
   const [currentStep, setCurrentStep] = useState(0);
   
@@ -36,6 +37,14 @@ const BookingFlow: React.FC = () => {
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null);
   const [generatedPlan, setGeneratedPlan] = useState<string>('');
 
+  // Listen for real-time config updates (e.g. Min Notice changes)
+  useEffect(() => {
+    const unsub = initConfigListener((newConfig) => {
+        setConfig(newConfig);
+    });
+    return () => unsub();
+  }, []);
+
   if (!config.sports || config.sports.length === 0) {
       return (
           <div className="text-center py-20 text-slate-400">
@@ -61,13 +70,13 @@ const BookingFlow: React.FC = () => {
 
      const availableCount = slots.filter(s => s.isAvailable).length;
      suggestAvailabilitySummary(availableCount).then(setAiSummary);
-  }, [selectedDate, selectedDuration, selectedLocation, selectedSport]);
+  }, [selectedDate, selectedDuration, selectedLocation, selectedSport, config]); // config is now a dependency
 
   useEffect(() => {
     if (currentStep === 2) { // Slot selection step
         fetchSlots();
     }
-  }, [currentStep, fetchSlots]);
+  }, [currentStep, fetchSlots, config]); // config dependency triggers refetch
 
   const handleDateChange = (offset: number) => {
       const newDate = new Date(selectedDate);
@@ -345,7 +354,7 @@ END:VCALENDAR`;
                             key={slot.id}
                             disabled={!slot.isAvailable}
                             onClick={() => setSelectedSlot(slot)}
-                            className={`py-3 px-2 rounded-xl text-sm font-medium transition-all ${selectedSlot?.id === slot.id ? 'bg-indigo-600 text-white shadow-lg ring-2 ring-indigo-400' : slot.isAvailable ? 'bg-slate-700/50 text-slate-200 hover:bg-slate-600' : 'bg-slate-900/50 text-slate-600 cursor-not-allowed'}`}
+                            className={`py-3 px-2 rounded-xl text-sm font-medium transition-all ${selectedSlot?.id === slot.id ? 'bg-indigo-600 text-white shadow-lg ring-2 ring-indigo-400' : slot.isAvailable ? 'bg-slate-700/50 text-slate-200 hover:bg-slate-600' : 'bg-slate-900/50 text-slate-600 cursor-not-allowed opacity-50'}`}
                         >
                             {new Date(slot.startTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                         </button>
@@ -456,9 +465,11 @@ END:VCALENDAR`;
                       </button>
                   </div>
 
-                  <div className="prose prose-invert prose-sm max-w-none bg-slate-900/50 p-6 rounded-xl border border-slate-700/50">
-                     {generatedPlan.split('\n').map((line, i) => <p key={i} className={line.startsWith('**') ? 'font-bold text-white mt-4' : 'text-slate-300'}>{line.replace(/\*\*/g, '')}</p>)}
-                  </div>
+                  {generatedPlan && (
+                    <div className="prose prose-invert prose-sm max-w-none bg-slate-900/50 p-6 rounded-xl border border-slate-700/50">
+                        {generatedPlan.split('\n').map((line, i) => <p key={i} className={line.startsWith('**') ? 'font-bold text-white mt-4' : 'text-slate-300'}>{line.replace(/\*\*/g, '')}</p>)}
+                    </div>
+                  )}
 
                   <div className="mt-8 pt-6 border-t border-slate-700 text-center">
                        <p className="font-bold text-amber-400 uppercase text-sm tracking-wide leading-relaxed">
