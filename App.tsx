@@ -4,7 +4,7 @@ import AdminLogin from './components/AdminLogin';
 import BookingFlow from './components/BookingFlow';
 import { isAuthenticated } from './services/authService';
 import { initConfigListener } from './services/configService';
-import { initBookingListener } from './services/calendarService';
+import { initBookingListener, initGoogleClient, startAutoSync } from './services/calendarService';
 
 const App: React.FC = () => {
   const [view, setView] = useState<'booking' | 'admin'>('booking');
@@ -12,20 +12,28 @@ const App: React.FC = () => {
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    // Inizializza connessioni real-time con Firebase all'avvio
+    // 1. Inizializza connessioni real-time con Firebase
     const unsubConfig = initConfigListener(() => {
-        // Una volta ricevuta la configurazione iniziale...
         const unsubBookings = initBookingListener(() => {
-             // ...e le prenotazioni iniziali, l'app è pronta
              setIsReady(true);
         });
-        return unsubBookings; // Questo verrà gestito separatamente in una struttura più complessa, qui semplifichiamo
+        return unsubBookings; 
     });
 
-    // Fallback di sicurezza: se Firebase è lento, sblocca comunque dopo 2 sec per non bloccare l'utente
-    const timeout = setTimeout(() => setIsReady(true), 2500);
+    // 2. Controllo Autenticazione
+    const authStatus = isAuthenticated();
+    setIsLoggedIn(authStatus);
 
-    setIsLoggedIn(isAuthenticated());
+    // 3. GLOBAL SYNC
+    // Inizializza Google Client per TUTTI (anche clienti).
+    // Se il calendario è pubblico (Free/Busy), l'app scaricherà gli impegni anche se a visitare è un cliente.
+    initGoogleClient().then(() => {
+        console.log("Google Client inizializzato. Avvio Auto-Sync...");
+        startAutoSync(); 
+    }).catch(err => console.warn("Errore init Google Client", err));
+
+    // Fallback di sicurezza
+    const timeout = setTimeout(() => setIsReady(true), 2500);
 
     return () => {
         unsubConfig();

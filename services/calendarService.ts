@@ -1,4 +1,3 @@
-
 import { TimeSlot, Booking, CalendarEvent } from '../types';
 import { getAppConfig } from './configService';
 import { db } from './firebase';
@@ -173,10 +172,13 @@ export const initGoogleClient = async (): Promise<void> => {
 
 const checkInitComplete = (resolve: any) => {
     if (gapiInited && gisInited) {
-        // Se eravamo connessi, proviamo a ripristinare o fare sync automatico
-        if (localStorage.getItem('courtmaster_gcal_token') === 'true') {
-             // Proviamo un sync silenzioso, se fallisce (401) lo gestirà il chiamante
-             startAutoSync();
+        // AUTO-RESTORE SESSION: Se l'utente era connesso, proviamo a ripristinare il token
+        // senza prompt popup se possibile, oppure segnamo come connesso per sync futuri
+        const wasConnected = localStorage.getItem('courtmaster_gcal_token') === 'true';
+        if (wasConnected) {
+             // Non possiamo forzare un refresh token lato client puro senza backend in modo sicuro al 100%,
+             // ma possiamo evitare di chiedere il login se il cookie di sessione Google è ancora valido nel browser.
+             // La vera magia avviene quando startAutoSync prova a chiamare le API.
         }
         resolve();
     }
@@ -198,10 +200,6 @@ export const connectGoogleCalendar = async (): Promise<boolean> => {
       if (resp.error) {
         reject(resp);
         return;
-      }
-      const gapi = (window as any).gapi;
-      if (gapi && gapi.client) {
-          // Il token è gestito internamente da gapi client dopo questa call
       }
       localStorage.setItem('courtmaster_gcal_token', 'true');
       startAutoSync(); // Avvia sync automatico
@@ -236,6 +234,11 @@ export const listGoogleCalendars = async (): Promise<{id: string, summary: strin
     // Check if client is ready
     if (!gapi || !gapi.client) return []; 
     
+    // Lista calendari richiede AUTH. Non può essere fatta da guest.
+    if (gapi.client.getToken() === null) {
+        return [];
+    }
+
     try {
         const response = await gapi.client.calendar.calendarList.list();
         return response.result.items.map((item: any) => ({
@@ -260,13 +263,15 @@ export const startAutoSync = () => {
     console.log("Avvio Auto-Sync Google Calendar...");
     // Primo sync immediato
     syncGoogleEventsToFirebase(undefined, true).catch(() => {});
+    
+    // Se siamo loggati (abbiamo il token), proviamo anche a esportare le prenotazioni pendenti
+    if (isCalendarConnected()) {
+         exportBookingsToGoogle().catch(err => console.log("Export background fallito (probabilmente token scaduto o guest)", err));
+    }
 
     // Sync ogni 5 minuti
     autoSyncInterval = setInterval(() => {
-        if (isCalendarConnected()) {
-            console.log("Esecuzione Auto-Sync periodico...");
-            syncGoogleEventsToFirebase(undefined, true).catch(err => console.warn("Auto-sync fallito", err));
-        }
+        syncGoogleEventsToFirebase(undefined, true).catch(err => console.warn("Auto-sync fallito", err));
     }, 5 * 60 * 1000); 
 };
 
@@ -278,40 +283,72 @@ export const stopAutoSync = () => {
 }
 
 const handleAuthError = () => {
-    console.warn("Sessione Google scaduta. Disconnessione forzata.");
-    disconnectGoogleCalendar();
-    // Non facciamo alert aggressivi, l'UI si aggiornerà
+    console.warn("Sessione Google scaduta o invalida.");
+    // Non disconnettiamo brutalmente per evitare UX negative ai guest,
+    // ma sappiamo che le chiamate private falliranno.
 };
 
-export const syncGoogleEventsToFirebase = async (calendarIds: string[] = ['primary'], silent = false) => {
+export const syncGoogleEventsToFirebase = async (calendarIds: string[] = [], silent = false) => {
     const gapi = (window as any).gapi;
     if (!gapi || !gapi.client) {
          if (!silent) throw new Error("GAPI non pronto");
          return 0;
     }
     
-    // Se non abbiamo token, proviamo a richiederlo silenziosamente o usciamo
-    if (gapi.client.getToken() === null) {
-         if (!silent) throw new Error("Devi connettere il calendario.");
-         return 0;
+    const config = getAppConfig();
+    
+    // 1. RACCOLTA CALENDARI DA CONTROLLARE
+    // Iniziamo con quelli selezionati manualmente nella lista "Occupati"
+    const manualCalendars = calendarIds.length > 0 ? calendarIds : (config.importBusyCalendars || []);
+    
+    // Usiamo un Set per evitare duplicati
+    const targetCalendarsSet = new Set<string>(manualCalendars);
+
+    // INTELLIGENZA: Aggiungiamo AUTOMATICAMENTE i calendari configurati nelle Sedi/Offerte
+    // Se un utente ha configurato un calendario per ricevere prenotazioni, deve anche essere controllato per le sovrapposizioni!
+    if (config.sports) {
+        config.sports.forEach(sport => {
+            if (sport.locations) {
+                sport.locations.forEach(loc => {
+                    if (loc.googleCalendarId) {
+                        targetCalendarsSet.add(loc.googleCalendarId);
+                    }
+                });
+            }
+        });
     }
 
-    const config = getAppConfig();
-    const targetCalendars = calendarIds || config.importBusyCalendars || ['primary'];
+    let targetCalendars = Array.from(targetCalendarsSet);
+    
+    // --- LOGICA GESTIONE GUEST VS ADMIN ---
+    const isAuthenticated = gapi.client.getToken() !== null;
+
+    if (!isAuthenticated) {
+        // Se siamo GUEST, non possiamo accedere a 'primary'.
+        // Filtriamo via 'primary' dalla lista.
+        targetCalendars = targetCalendars.filter(id => id !== 'primary');
+        
+        if (targetCalendars.length === 0) {
+            // Se non ci sono calendari pubblici specifici, usciamo in silenzio.
+            // Questo previene l'errore "Calendario non trovato: primary".
+            if (!silent) console.log("Guest Sync: Nessun calendario pubblico configurato. Salto sync.");
+            return 0;
+        }
+    } else {
+        // Se siamo ADMIN loggati e la lista è vuota, usiamo di default 'primary' (il tuo calendario personale)
+        if (targetCalendars.length === 0) {
+            targetCalendars = ['primary'];
+        }
+    }
 
     const now = new Date();
     const nextMonth = new Date();
     nextMonth.setDate(nextMonth.getDate() + 30);
 
     try {
-        // 1. Pulisci vecchi eventi importati
-        const q = query(collection(db, BOOKING_COLLECTION), where("sportName", "==", "EXTERNAL_BUSY"));
-        const snapshot = await getDocs(q);
-        const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, BOOKING_COLLECTION, d.id)));
-        await Promise.all(deletePromises);
-
-        // 2. Scarica nuovi eventi
+        // 1. Scarica nuovi eventi da Google
         let allGoogleEvents: any[] = [];
+        let hasReadErrors = false;
         
         for (const calId of targetCalendars) {
             try {
@@ -327,17 +364,40 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = ['prima
                     allGoogleEvents = [...allGoogleEvents, ...response.result.items];
                 }
             } catch (e: any) {
-                if (e.status === 401) {
-                    handleAuthError();
-                    throw e;
+                // Gestione specifica errori
+                if (e.status === 401 || e.status === 403) {
+                     // 401: Non autorizzato (serve login)
+                     // 403: Forbidden (calendario privato non accessibile con API Key)
+                     if (!silent) console.warn(`Impossibile leggere calendario ${calId} (Privato/No Auth)`);
+                     hasReadErrors = true;
+                } else if (e.status === 404) {
+                    // Ignoriamo 404 silenziosamente per evitare panico utente
+                    if (!silent) console.warn(`Calendario non trovato: ${calId}`);
+                } else {
+                    console.warn(`Errore generico lettura calendario ${calId}:`, e);
                 }
-                console.warn(`Impossibile leggere calendario ${calId}:`, e);
             }
+        }
+
+        // Se non siamo riusciti a leggere nulla (es. utente guest e calendario privato), usciamo senza cancellare i dati vecchi per sicurezza
+        if (allGoogleEvents.length === 0 && hasReadErrors) {
+            return 0;
+        }
+
+        // 2. Pulisci vecchi eventi importati SU FIREBASE
+        // ATTENZIONE: Facciamo pulizia solo se abbiamo letto qualcosa con successo, o se siamo sicuri che non ci siano eventi
+        if (allGoogleEvents.length > 0 || (!hasReadErrors && targetCalendars.length > 0)) {
+            const q = query(collection(db, BOOKING_COLLECTION), where("sportName", "==", "EXTERNAL_BUSY"));
+            const snapshot = await getDocs(q);
+            const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, BOOKING_COLLECTION, d.id)));
+            await Promise.all(deletePromises);
+        } else {
+            return 0;
         }
 
         // 3. Salva su Firebase
         const addPromises = allGoogleEvents.map((ev: any) => {
-            if (!ev.start.dateTime) return Promise.resolve(); 
+            if (!ev.start.dateTime) return Promise.resolve(); // Salta eventi tutto il giorno se non gestiti
             
             const start = new Date(ev.start.dateTime);
             const end = new Date(ev.end.dateTime);
@@ -373,22 +433,28 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = ['prima
 export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primary'): Promise<number> => {
     const gapi = (window as any).gapi;
     if (!gapi || !gapi.client || gapi.client.getToken() === null) {
-        throw new Error("Devi connettere il calendario prima di esportare.");
+        // Se non siamo connessi, non lanciamo errore, ma ritorniamo 0.
+        // Questo permette chiamate "safe" in background.
+        return 0;
     }
 
     const config = getAppConfig();
     
+    // Filtra prenotazioni future non ancora sincronizzate
     const unsyncedBookings = cachedBookings.filter(b => 
         !b.googleEventId && 
         b.sportName !== 'EXTERNAL_BUSY' && 
         new Date(b.startTime) > new Date()
     );
 
+    if (unsyncedBookings.length === 0) return 0;
+    console.log(`Trovate ${unsyncedBookings.length} prenotazioni da esportare su Google...`);
+
     let successCount = 0;
 
     for (const booking of unsyncedBookings) {
         try {
-            // LOGICA NUOVA: Cerca il calendario specifico per Sport -> Location
+            // LOGICA: Cerca il calendario specifico per Sport -> Location
             let targetCalendarId = defaultCalendarId;
             
             const sport = config.sports.find(s => s.id === booking.sportId);
@@ -428,7 +494,8 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
         } catch (error: any) {
             if (error.status === 401) {
                 handleAuthError();
-                throw error;
+                // Se auth fallisce, interrompiamo il loop
+                break;
             }
             console.error(`Errore export prenotazione ${booking.customerName}:`, error);
         }

@@ -129,23 +129,55 @@ const BookingFlow: React.FC = () => {
                 <h1 className="text-4xl font-extrabold text-white">{config.homeTitle}</h1>
                 <p className="text-lg text-slate-400 max-w-xl mx-auto">{config.homeSubtitle}</p>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto">
-                {config.sports.map(sport => (
-                    <button 
-                        key={sport.id}
-                        onClick={() => { setSelectedSport(sport); setCurrentStep(1); }}
-                        className="group p-6 rounded-2xl text-left transition-all duration-300 bg-slate-800/50 border border-slate-700 hover:bg-slate-800 hover:border-indigo-500 hover:shadow-lg hover:shadow-indigo-500/20"
-                    >
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <div className="text-4xl mb-2">{sport.emoji}</div>
-                                <div className="font-bold text-xl text-white group-hover:text-indigo-400 transition-colors">{sport.name}</div>
-                                <p className="text-sm text-slate-400 mt-1">{sport.description}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-2xl mx-auto">
+                {config.sports.map(sport => {
+                    // Logic to distinguish colors based on sport name
+                    const isTennis = sport.name.toLowerCase().includes('tennis');
+                    const isPadel = sport.name.toLowerCase().includes('padel');
+
+                    // Default Style (Neutral)
+                    let containerClass = "bg-slate-800/50 border-slate-700 hover:border-indigo-500 hover:shadow-indigo-500/20";
+                    let titleClass = "group-hover:text-indigo-400";
+                    let arrowClass = "group-hover:bg-indigo-600";
+                    let decorClass = "bg-indigo-500";
+
+                    // Tennis Style (Orange)
+                    if (isTennis) {
+                        containerClass = "bg-slate-800/50 border-slate-700 hover:border-orange-500 hover:shadow-orange-500/20 hover:bg-orange-500/5";
+                        titleClass = "group-hover:text-orange-400";
+                        arrowClass = "group-hover:bg-orange-500";
+                        decorClass = "bg-orange-500";
+                    } 
+                    // Padel Style (Cyan/Blue)
+                    else if (isPadel) {
+                        containerClass = "bg-slate-800/50 border-slate-700 hover:border-cyan-500 hover:shadow-cyan-500/20 hover:bg-cyan-500/5";
+                        titleClass = "group-hover:text-cyan-400";
+                        arrowClass = "group-hover:bg-cyan-500";
+                        decorClass = "bg-cyan-500";
+                    }
+
+                    return (
+                        <button 
+                            key={sport.id}
+                            onClick={() => { setSelectedSport(sport); setCurrentStep(1); }}
+                            className={`group p-8 rounded-2xl text-left transition-all duration-300 border hover:shadow-xl ${containerClass}`}
+                        >
+                            <div className="flex items-center justify-between h-full">
+                                <div className="flex flex-col h-full justify-between">
+                                    <div>
+                                        {/* Colored Decorative Bar instead of Emoji */}
+                                        <div className={`w-10 h-1.5 rounded-full mb-6 ${decorClass} opacity-90 shadow-sm`}></div>
+                                        <div className={`font-bold text-3xl text-white transition-colors mb-2 ${titleClass}`}>{sport.name}</div>
+                                        <p className="text-sm text-slate-400 leading-relaxed">{sport.description}</p>
+                                    </div>
+                                </div>
+                                <div className={`w-12 h-12 rounded-full bg-slate-700 text-slate-400 flex items-center justify-center transition-all ${arrowClass} group-hover:text-white ml-4 flex-shrink-0`}>
+                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                                </div>
                             </div>
-                            <div className="w-8 h-8 rounded-full bg-slate-700 text-slate-400 flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-all">→</div>
-                        </div>
-                    </button>
-                ))}
+                        </button>
+                    );
+                })}
             </div>
         </div>
       );
@@ -158,7 +190,7 @@ const BookingFlow: React.FC = () => {
               <button onClick={() => setCurrentStep(0)} className="text-slate-400 hover:text-white text-sm flex items-center gap-1">← Cambia Sport</button>
               
               <div className="text-center mb-8">
-                  <div className="text-4xl mb-2">{selectedSport.emoji}</div>
+                  {/* Title without Emoji */}
                   <h2 className="text-3xl font-bold text-white">{selectedSport.name}</h2>
                   <p className="text-slate-400">Configura la tua lezione</p>
               </div>
