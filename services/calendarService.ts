@@ -1,4 +1,5 @@
-import { TimeSlot, Booking, CalendarEvent } from '../types';
+
+import { TimeSlot, Booking, CalendarEvent, DailySchedule } from '../types';
 import { getAppConfig } from './configService';
 import { db } from './firebase';
 import { collection, addDoc, onSnapshot, query, orderBy, where, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
@@ -68,7 +69,7 @@ export const saveBooking = async (booking: Booking): Promise<void> => {
   }
 };
 
-export const getAvailableSlots = (date: Date, durationMinutes: number, sportId: string, locationId: string): TimeSlot[] => {
+export const getAvailableSlots = (date: Date, durationMinutes: number, sportId: string, locationId: string, lessonTypeId?: string): TimeSlot[] => {
   const config = getAppConfig();
   const allEvents = getAllCalendarEvents(); 
   
@@ -79,11 +80,27 @@ export const getAvailableSlots = (date: Date, durationMinutes: number, sportId: 
   const location = sport.locations.find(l => l.id === locationId);
   if (!location) return [];
 
-  const daysMap = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  const dayName = daysMap[date.getDay()] as keyof typeof location.schedule;
-  const daySchedule = location.schedule[dayName];
+  // --- LOGICA ORARI ---
+  // 1. Controlla se c'è un'eccezione per questa data specifica (YYYY-MM-DD)
+  const dateString = date.toISOString().split('T')[0];
+  let daySchedule: DailySchedule | undefined = location.scheduleExceptions?.[dateString];
 
+  // 2. Se non c'è eccezione, usa l'orario settimanale standard
+  if (!daySchedule) {
+      const daysMap = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const dayName = daysMap[date.getDay()] as keyof typeof location.schedule;
+      daySchedule = location.schedule[dayName];
+  }
+
+  // Se il giorno è chiuso
   if (!daySchedule || !daySchedule.isOpen) return [];
+
+  // Se è stato richiesto un tipo di lezione specifico, controlla se è permesso oggi
+  if (lessonTypeId && daySchedule.allowedLessonTypeIds && daySchedule.allowedLessonTypeIds.length > 0) {
+      if (!daySchedule.allowedLessonTypeIds.includes(lessonTypeId)) {
+          return []; // Il tipo di lezione non è permesso in questo giorno
+      }
+  }
 
   const [startH, startM] = daySchedule.start.split(':').map(Number);
   const [endH, endM] = daySchedule.end.split(':').map(Number);
@@ -100,10 +117,7 @@ export const getAvailableSlots = (date: Date, durationMinutes: number, sportId: 
   const now = new Date();
   
   // LOGICA PREAVVISO MINIMO
-  // Assicuriamo che sia un numero e non NaN
   const minNoticeMinutes = Number(config.minBookingNoticeMinutes) || 0;
-  
-  // Calcolo tempo minimo consentito (Adesso + Minuti Preavviso)
   const earliestAllowedTime = new Date(now.getTime() + minNoticeMinutes * 60000);
 
   let currentSlotStart = new Date(dayStart);
@@ -116,7 +130,6 @@ export const getAvailableSlots = (date: Date, durationMinutes: number, sportId: 
       const slotId = `${date.toISOString().split('T')[0]}-${locationId}-${currentSlotStart.getHours()}-${currentSlotStart.getMinutes()}`;
 
       // Controllo sovrapposizioni
-      // 1. Eventi (Booking o Busy) che si sovrappongono a questo slot
       const isBusy = allEvents.some(event => {
           const eventStart = new Date(event.start).getTime();
           const eventEnd = new Date(event.end).getTime();
@@ -125,8 +138,6 @@ export const getAvailableSlots = (date: Date, durationMinutes: number, sportId: 
           return (eventStart < slotEndTime && eventEnd > slotStartTime);
       });
 
-      // Controllo Preavviso:
-      // Lo slot è bloccato se il suo INIZIO è prima del tempo minimo consentito.
       const isTooSoon = currentSlotStart < earliestAllowedTime;
 
       slots.push({
@@ -166,53 +177,58 @@ export const initGoogleClient = async (): Promise<void> => {
         const gapi = (window as any).gapi;
         const google = (window as any).google;
 
-        // 1. Initialize Identity Service (Token Client) FIRST
-        tokenClient = google.accounts.oauth2.initTokenClient({
-            client_id: CLIENT_ID,
-            scope: SCOPES,
-            callback: '', // Defined dynamically
-        });
-        gisInited = true;
+        // 1. Initialize Identity Service FIRST (for restoring session)
+        if (!gisInited) {
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES,
+                callback: '', // Defined dynamically
+            });
+            gisInited = true;
+        }
 
         // 2. Initialize GAPI Client
-        gapi.load('client', async () => {
-            try {
-              await gapi.client.init({
-                  apiKey: API_KEY,
-                  discoveryDocs: [DISCOVERY_DOC],
-              });
-              gapiInited = true;
+        if (!gapiInited) {
+             gapi.load('client', async () => {
+                try {
+                  await gapi.client.init({
+                      apiKey: API_KEY,
+                      discoveryDocs: [DISCOVERY_DOC],
+                  });
+                  gapiInited = true;
 
-              // 3. ONLY AFTER BOTH ARE READY -> Attempt Restore
-              const wasConnected = localStorage.getItem('courtmaster_gcal_token') === 'true';
-              if (wasConnected) {
-                  console.log("Ripristino sessione Google in corso...");
-                  try {
-                       // Override callback temporary for silent restore
-                       const originalCallback = tokenClient.callback;
-                       tokenClient.callback = (resp: any) => {
-                           if (resp.error) {
-                               console.warn("Silent restore failed:", resp);
-                           } else {
-                               console.log("Sessione Google ripristinata.");
-                           }
-                           resolve();
-                       };
-                       // Request with empty prompt for silent refresh
-                       tokenClient.requestAccessToken({prompt: ''});
-                  } catch (e) {
-                      console.warn("Errore token restore:", e);
+                  // 3. ATTEMPT RESTORE
+                  const wasConnected = localStorage.getItem('courtmaster_gcal_token') === 'true';
+                  if (wasConnected) {
+                      console.log("Ripristino sessione Google in corso...");
+                      try {
+                           const originalCallback = tokenClient.callback;
+                           tokenClient.callback = (resp: any) => {
+                               if (resp.error) {
+                                   console.warn("Restore failed:", resp);
+                                   localStorage.removeItem('courtmaster_gcal_token');
+                               } else {
+                                   console.log("Sessione Google ripristinata.");
+                               }
+                               resolve();
+                           };
+                           tokenClient.requestAccessToken({prompt: ''});
+                      } catch (e) {
+                          console.warn("Errore token restore:", e);
+                          resolve();
+                      }
+                  } else {
                       resolve();
                   }
-              } else {
-                  resolve();
-              }
 
-            } catch (e) {
-              console.error("Errore GAPI Init:", e);
-              resolve();
-            }
-        });
+                } catch (e) {
+                  console.error("Errore GAPI Init:", e);
+                  resolve();
+                }
+            });
+        } else {
+            resolve();
+        }
     });
     
     return initPromise;
@@ -225,7 +241,6 @@ export const isCalendarConnected = (): boolean => {
 export const connectGoogleCalendar = async (): Promise<boolean> => {
   return new Promise((resolve, reject) => {
     if (!tokenClient) {
-        // Retry logic: if called too early, try waiting a moment
         console.warn("TokenClient not ready, retrying...");
         setTimeout(() => {
              if(tokenClient) {
@@ -273,12 +288,9 @@ export const disconnectGoogleCalendar = () => {
 
 export const listGoogleCalendars = async (): Promise<{id: string, summary: string, primary?: boolean}[]> => {
     const gapi = (window as any).gapi;
-    // Check if client is ready
     if (!gapi || !gapi.client) return []; 
     
-    // Lista calendari richiede AUTH.
     if (gapi.client.getToken() === null) {
-        // Se pensiamo di essere connessi ma non abbiamo il token, forse il restore è fallito o non ancora avvenuto
         return [];
     }
 
@@ -304,15 +316,12 @@ export const startAutoSync = () => {
     if (autoSyncInterval) clearInterval(autoSyncInterval);
     
     console.log("Avvio Auto-Sync Google Calendar...");
-    // Primo sync immediato
     syncGoogleEventsToFirebase(undefined, true).catch(() => {});
     
-    // Se siamo loggati (abbiamo il token), proviamo anche a esportare le prenotazioni pendenti
     if (isCalendarConnected()) {
-         exportBookingsToGoogle().catch(err => console.log("Export background fallito (probabilmente token scaduto o guest)", err));
+         exportBookingsToGoogle().catch(err => console.log("Export background fallito", err));
     }
 
-    // Sync ogni 5 minuti
     autoSyncInterval = setInterval(() => {
         syncGoogleEventsToFirebase(undefined, true).catch(err => console.warn("Auto-sync fallito", err));
     }, 5 * 60 * 1000); 
@@ -337,16 +346,9 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = [], sil
     }
     
     const config = getAppConfig();
-    
-    // 1. RACCOLTA CALENDARI DA CONTROLLARE
-    // Iniziamo con quelli selezionati manualmente nella lista "Occupati"
     const manualCalendars = calendarIds.length > 0 ? calendarIds : (config.importBusyCalendars || []);
-    
-    // Usiamo un Set per evitare duplicati
     const targetCalendarsSet = new Set<string>(manualCalendars);
 
-    // INTELLIGENZA: Aggiungiamo AUTOMATICAMENTE i calendari configurati nelle Sedi/Offerte
-    // Se un utente ha configurato un calendario per ricevere prenotazioni, deve anche essere controllato per le sovrapposizioni!
     if (config.sports) {
         config.sports.forEach(sport => {
             if (sport.locations) {
@@ -360,23 +362,15 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = [], sil
     }
 
     let targetCalendars = Array.from(targetCalendarsSet);
-    
-    // --- LOGICA GESTIONE GUEST VS ADMIN ---
     const isAuthenticated = gapi.client.getToken() !== null;
 
     if (!isAuthenticated) {
-        // Se siamo GUEST, non possiamo accedere a 'primary'.
-        // Filtriamo via 'primary' dalla lista.
         targetCalendars = targetCalendars.filter(id => id !== 'primary');
-        
         if (targetCalendars.length === 0) {
-            // Se non ci sono calendari pubblici specifici, usciamo in silenzio.
-            // Questo previene l'errore "Calendario non trovato: primary".
-            if (!silent) console.log("Guest Sync: Nessun calendario pubblico configurato. Salto sync.");
+            if (!silent) console.log("Guest Sync: Nessun calendario pubblico. Salto sync.");
             return 0;
         }
     } else {
-        // Se siamo ADMIN loggati e la lista è vuota, usiamo di default 'primary' (il tuo calendario personale)
         if (targetCalendars.length === 0) {
             targetCalendars = ['primary'];
         }
@@ -387,7 +381,6 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = [], sil
     nextMonth.setDate(nextMonth.getDate() + 30);
 
     try {
-        // 1. Scarica nuovi eventi da Google
         let allGoogleEvents: any[] = [];
         let hasReadErrors = false;
         
@@ -405,12 +398,11 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = [], sil
                     allGoogleEvents = [...allGoogleEvents, ...response.result.items];
                 }
             } catch (e: any) {
-                // Gestione specifica errori
                 if (e.status === 401 || e.status === 403) {
                      if (!silent) console.warn(`Impossibile leggere calendario ${calId} (Privato/No Auth)`);
                      hasReadErrors = true;
                 } else if (e.status === 404) {
-                    if (!silent) console.warn(`Calendario non trovato: ${calId}`);
+                    // Ignora
                 } else {
                     console.warn(`Errore generico lettura calendario ${calId}:`, e);
                 }
@@ -421,7 +413,6 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = [], sil
             return 0;
         }
 
-        // 2. Pulisci vecchi eventi importati SU FIREBASE
         if (allGoogleEvents.length > 0 || (!hasReadErrors && targetCalendars.length > 0)) {
             const q = query(collection(db, BOOKING_COLLECTION), where("sportName", "==", "EXTERNAL_BUSY"));
             const snapshot = await getDocs(q);
@@ -431,9 +422,8 @@ export const syncGoogleEventsToFirebase = async (calendarIds: string[] = [], sil
             return 0;
         }
 
-        // 3. Salva su Firebase
         const addPromises = allGoogleEvents.map((ev: any) => {
-            if (!ev.start.dateTime) return Promise.resolve(); // Salta eventi tutto il giorno se non gestiti
+            if (!ev.start.dateTime) return Promise.resolve(); 
             
             const start = new Date(ev.start.dateTime);
             const end = new Date(ev.end.dateTime);
@@ -473,8 +463,6 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
     }
 
     const config = getAppConfig();
-    
-    // Filtra prenotazioni future non ancora sincronizzate
     const unsyncedBookings = cachedBookings.filter(b => 
         !b.googleEventId && 
         b.sportName !== 'EXTERNAL_BUSY' && 
@@ -488,9 +476,7 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
 
     for (const booking of unsyncedBookings) {
         try {
-            // LOGICA: Cerca il calendario specifico per Sport -> Location
             let targetCalendarId = defaultCalendarId;
-            
             const sport = config.sports.find(s => s.id === booking.sportId);
             if (sport) {
                 const location = sport.locations.find(l => l.id === booking.locationId);

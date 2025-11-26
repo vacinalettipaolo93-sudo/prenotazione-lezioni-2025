@@ -15,6 +15,7 @@ export interface DailySchedule {
   isOpen: boolean;
   start: string; // Format "HH:mm" es "09:00"
   end: string;   // Format "HH:mm" es "22:00"
+  allowedLessonTypeIds?: string[]; // IDs of lesson types allowed on this day
 }
 
 export interface WeeklySchedule {
@@ -33,7 +34,8 @@ export interface SportLocation {
   name: string;
   address: string;
   googleCalendarId?: string; // ID del calendario specifico per questo sport in questa sede
-  schedule: WeeklySchedule; // Orari specifici per questa sede e sport
+  schedule: WeeklySchedule; // Orari standard settimanali
+  scheduleExceptions?: Record<string, DailySchedule>; // ECCEZIONI: Key è "YYYY-MM-DD"
   slotInterval: 30 | 60;
 }
 

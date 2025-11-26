@@ -1,5 +1,5 @@
 
-import { AppConfig, Sport, SportLocation, WeeklySchedule, LessonType } from '../types';
+import { AppConfig, Sport, SportLocation, WeeklySchedule, LessonType, DailySchedule } from '../types';
 import { db } from './firebase';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 
@@ -7,13 +7,13 @@ const CONFIG_DOC_ID = 'global_settings';
 const CONFIG_COLLECTION = 'settings';
 
 const DEFAULT_SCHEDULE: WeeklySchedule = {
-  monday: { isOpen: true, start: '09:00', end: '22:00' },
-  tuesday: { isOpen: true, start: '09:00', end: '22:00' },
-  wednesday: { isOpen: true, start: '09:00', end: '22:00' },
-  thursday: { isOpen: true, start: '09:00', end: '22:00' },
-  friday: { isOpen: true, start: '09:00', end: '22:00' },
-  saturday: { isOpen: true, start: '09:00', end: '18:00' },
-  sunday: { isOpen: false, start: '09:00', end: '13:00' },
+  monday: { isOpen: true, start: '09:00', end: '22:00', allowedLessonTypeIds: [] },
+  tuesday: { isOpen: true, start: '09:00', end: '22:00', allowedLessonTypeIds: [] },
+  wednesday: { isOpen: true, start: '09:00', end: '22:00', allowedLessonTypeIds: [] },
+  thursday: { isOpen: true, start: '09:00', end: '22:00', allowedLessonTypeIds: [] },
+  friday: { isOpen: true, start: '09:00', end: '22:00', allowedLessonTypeIds: [] },
+  saturday: { isOpen: true, start: '09:00', end: '18:00', allowedLessonTypeIds: [] },
+  sunday: { isOpen: false, start: '09:00', end: '13:00', allowedLessonTypeIds: [] },
 };
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -33,6 +33,7 @@ const DEFAULT_CONFIG: AppConfig = {
                 name: 'Club Centrale',
                 address: 'Via Roma 10',
                 schedule: JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)),
+                scheduleExceptions: {},
                 slotInterval: 60,
                 googleCalendarId: ''
             }
@@ -54,6 +55,7 @@ const DEFAULT_CONFIG: AppConfig = {
                 name: 'Circolo Nord',
                 address: 'Via Milano 42',
                 schedule: JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)),
+                scheduleExceptions: {},
                 slotInterval: 60, // Usually shorter for Padel
                 googleCalendarId: ''
             }
@@ -81,12 +83,15 @@ export const initConfigListener = (callback?: (config: AppConfig) => void) => {
       // Merge con default
       currentConfig = { ...DEFAULT_CONFIG, ...data } as AppConfig;
       
-      // Data Migration Logic: Ensure new nested structure exists if migrating from old version
+      // Data Migration Logic
       if (!currentConfig.sports) currentConfig.sports = [];
       
       currentConfig.sports = currentConfig.sports.map(s => ({
           ...s,
-          locations: s.locations || [],
+          locations: s.locations ? s.locations.map(l => ({
+              ...l,
+              scheduleExceptions: l.scheduleExceptions || {} // Ensure exceptions object exists
+          })) : [],
           lessonTypes: s.lessonTypes || [],
           durations: s.durations || [60]
       }));
@@ -181,6 +186,7 @@ export const addSportLocation = (sportId: string, name: string, address: string)
             name,
             address,
             schedule: JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)),
+            scheduleExceptions: {},
             slotInterval: 60,
             googleCalendarId: ''
         });
@@ -195,6 +201,28 @@ export const updateSportLocation = (sportId: string, locId: string, updates: Par
         const locIndex = sport.locations.findIndex(l => l.id === locId);
         if (locIndex !== -1) {
             sport.locations[locIndex] = { ...sport.locations[locIndex], ...updates };
+            saveAppConfig(config);
+        }
+    }
+}
+
+// Nuova funzione per aggiungere/modificare un'eccezione
+export const updateLocationException = (sportId: string, locId: string, date: string, schedule: DailySchedule | null) => {
+    const config = getAppConfig();
+    const sport = config.sports.find(s => s.id === sportId);
+    if (sport) {
+        const locIndex = sport.locations.findIndex(l => l.id === locId);
+        if (locIndex !== -1) {
+            const loc = sport.locations[locIndex];
+            if (!loc.scheduleExceptions) loc.scheduleExceptions = {};
+            
+            if (schedule === null) {
+                // Rimuovi eccezione
+                delete loc.scheduleExceptions[date];
+            } else {
+                // Aggiungi/Aggiorna eccezione
+                loc.scheduleExceptions[date] = schedule;
+            }
             saveAppConfig(config);
         }
     }

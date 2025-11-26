@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport, LessonType } from '../types';
+import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport, LessonType, DailySchedule } from '../types';
 import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase, exportBookingsToGoogle, getBookings, listGoogleCalendars } from '../services/calendarService';
-import { getAppConfig, addSport, updateSport, removeSport, addSportLocation, updateSportLocation, removeSportLocation, addSportLessonType, removeSportLessonType, addSportDuration, removeSportDuration, updateHomeConfig, updateMinBookingNotice, initConfigListener, updateImportBusyCalendars, addSportLessonType as updateSportLessonTypeRef } from '../services/configService';
-// Note: importing updateSportLessonTypeRef just to access config logic, but we'll manually implement updates in UI via updateSport
+import { getAppConfig, addSport, updateSport, removeSport, addSportLocation, updateSportLocation, removeSportLocation, addSportLessonType, removeSportLessonType, addSportDuration, removeSportDuration, updateHomeConfig, updateMinBookingNotice, initConfigListener, updateImportBusyCalendars, updateLocationException } from '../services/configService';
 import { logout } from '../services/authService';
 import Button from './Button';
 
@@ -48,12 +47,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [selectedScheduleLocId, setSelectedScheduleLocId] = useState<string>('');
   const [editingSchedule, setEditingSchedule] = useState<WeeklySchedule | null>(null);
   const [editingSlotInterval, setEditingSlotInterval] = useState<30 | 60>(60);
+  
+  // Exception Management State
+  const [exceptionDate, setExceptionDate] = useState<string>('');
+  const [exceptionData, setExceptionData] = useState<DailySchedule>({ isOpen: true, start: '09:00', end: '22:00', allowedLessonTypeIds: [] });
+  const [currentExceptions, setCurrentExceptions] = useState<Record<string, DailySchedule>>({});
 
   useEffect(() => {
     const init = async () => {
         await initGoogleClient();
         setIsConnected(isCalendarConnected());
-        // Se siamo connessi, fetch calendari immediato
         if (isCalendarConnected()) {
             fetchUserCalendars();
         }
@@ -75,7 +78,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     return () => unsub();
   }, []);
 
-  // Ensure user calendars are loaded if connection status changes
   useEffect(() => {
       if (isConnected && userCalendars.length === 0) {
           fetchUserCalendars();
@@ -101,6 +103,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           if (loc) {
               setEditingSchedule(loc.schedule);
               setEditingSlotInterval(loc.slotInterval);
+              setCurrentExceptions(loc.scheduleExceptions || {});
           } else {
               setEditingSchedule(null);
           }
@@ -117,9 +120,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       try {
           const cals = await listGoogleCalendars();
           setUserCalendars(cals);
-          if (cals.length === 0 && isCalendarConnected()) {
-              // Se siamo connessi ma non vediamo calendari, potrebbe essere un problema di sync temporaneo
-          }
       } catch (e: any) {
           console.error("Could not list calendars", e);
           if (e.status === 401) setIsConnected(false);
@@ -223,7 +223,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   }
 
   const handleUpdateLessonType = (sportId: string, typeId: string, newName: string) => {
-     // Helper to update lesson type name inside the nested array
      const sport = config.sports.find(s => s.id === sportId);
      if (sport) {
          const newTypes = sport.lessonTypes.map(t => t.id === typeId ? {...t, name: newName} : t);
@@ -265,6 +264,34 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       });
   };
 
+  const handleLessonTypeToggle = (day: keyof WeeklySchedule, typeId: string) => {
+      if (!editingSchedule) return;
+      setEditingSchedule(prev => {
+          if (!prev) return null;
+          const currentTypes = prev[day].allowedLessonTypeIds || [];
+          const newTypes = currentTypes.includes(typeId) 
+             ? currentTypes.filter(id => id !== typeId)
+             : [...currentTypes, typeId];
+          
+          return {
+              ...prev,
+              [day]: { ...prev[day], allowedLessonTypeIds: newTypes }
+          };
+      });
+  }
+  
+  // --- EXCEPTION ACTIONS ---
+  const handleSaveException = () => {
+      if (!selectedScheduleSportId || !selectedScheduleLocId || !exceptionDate) return;
+      updateLocationException(selectedScheduleSportId, selectedScheduleLocId, exceptionDate, exceptionData);
+      setExceptionDate(''); // Reset form
+  }
+
+  const handleDeleteException = (date: string) => {
+      if (!selectedScheduleSportId || !selectedScheduleLocId) return;
+      updateLocationException(selectedScheduleSportId, selectedScheduleLocId, date, null);
+  }
+
   const handleUpdateHome = () => {
       updateHomeConfig(homeTitle, homeSubtitle);
       alert('Home aggiornata!');
@@ -305,7 +332,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </div>
       </div>
 
-      {/* TAB: CALENDAR (Semplificato) */}
+      {/* TAB: CALENDAR */}
       {activeTab === 'calendar' && (
           <div className="space-y-8 animate-in fade-in">
              <div className={`p-6 rounded-xl border ${isConnected ? 'bg-emerald-900/10 border-emerald-500/30' : 'bg-slate-800 border-slate-700'}`}>
@@ -370,10 +397,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           </div>
       )}
 
-      {/* TAB: CONFIG (SPORTS & NESTED) */}
+      {/* TAB: CONFIG */}
       {activeTab === 'config' && (
         <div className="animate-in fade-in space-y-8">
-             
              {/* Global Settings */}
              <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6 flex items-center justify-between gap-4">
                 <div>
@@ -394,7 +420,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
              {/* Sports List */}
              <div className="space-y-4">
                  <h3 className="text-xl font-bold text-white">Configurazione Sport</h3>
-                 
                  {config.sports.map(sport => (
                      <div key={sport.id} className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
                          {/* Sport Header */}
@@ -422,12 +447,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                  <div className={`transform transition-transform ${expandedSportId === sport.id ? 'rotate-180' : ''}`}>▼</div>
                              </div>
                          </div>
-
                          {/* Nested Configuration Body */}
                          {expandedSportId === sport.id && (
                              <div className="p-6 bg-slate-900/50 border-t border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-6">
-                                 
-                                 {/* Col 1: Locations */}
                                  <div className="space-y-3">
                                      <h5 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">Sedi & Calendari</h5>
                                      {sport.locations.map(loc => (
@@ -465,8 +487,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                          <button onClick={() => handleAddLocation(sport.id)} className="w-full bg-slate-700 hover:bg-slate-600 text-xs text-white py-1 rounded">Aggiungi Sede</button>
                                      </div>
                                  </div>
-
-                                 {/* Col 2: Lesson Types */}
                                  <div className="space-y-3">
                                      <h5 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">Tipi Lezione</h5>
                                      {sport.lessonTypes.map(lt => (
@@ -484,8 +504,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                          <button onClick={() => handleAddLessonType(sport.id)} className="bg-slate-700 hover:bg-slate-600 text-xs text-white px-2 rounded">+</button>
                                      </div>
                                  </div>
-
-                                 {/* Col 3: Durations */}
                                  <div className="space-y-3">
                                      <h5 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">Durate (min)</h5>
                                      <div className="flex flex-wrap gap-2">
@@ -505,8 +523,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                          )}
                      </div>
                  ))}
-
-                 {/* Add Sport */}
                  <div className="flex gap-2 max-w-md mt-6">
                      <input 
                         className="flex-1 p-2 bg-slate-900 border border-slate-600 rounded-lg text-white"
@@ -520,91 +536,176 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </div>
       )}
 
-      {/* TAB: SCHEDULE (Now Location Specific) */}
+      {/* TAB: SCHEDULE */}
       {activeTab === 'schedule' && (
-          <div className="max-w-4xl mx-auto animate-in fade-in">
-               <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
-                   <div className="p-6 border-b border-slate-700 bg-slate-800/80 flex flex-col md:flex-row justify-between items-center gap-4">
-                       <div>
-                           <h2 className="text-xl font-bold text-white">Orari Apertura</h2>
-                           <p className="text-sm text-slate-400">Configura orari per sport e sede.</p>
-                       </div>
-                        
-                       <div className="flex gap-2">
-                           <select 
-                                className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
-                                value={selectedScheduleSportId}
-                                onChange={(e) => {
-                                    const newSportId = e.target.value;
-                                    setSelectedScheduleSportId(newSportId);
-                                    // Automatically select first location of new sport
-                                    const sport = config.sports.find(s => s.id === newSportId);
-                                    if(sport && sport.locations.length > 0) {
-                                        setSelectedScheduleLocId(sport.locations[0].id);
-                                    } else {
-                                        setSelectedScheduleLocId('');
-                                    }
-                                }}
-                            >
-                                <option value="" disabled>Seleziona Sport</option>
-                                {config.sports.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                            </select>
-                            <select 
-                                className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
-                                value={selectedScheduleLocId}
-                                onChange={(e) => setSelectedScheduleLocId(e.target.value)}
-                                disabled={!selectedScheduleSportId}
-                            >
-                                <option value="" disabled>Seleziona Sede</option>
-                                {config.sports.find(s => s.id === selectedScheduleSportId)?.locations.map(l => (
-                                    <option key={l.id} value={l.id}>{l.name}</option>
-                                ))}
-                            </select>
-                       </div>
+          <div className="max-w-4xl mx-auto animate-in fade-in space-y-6">
+               
+               {/* 1. SELEZIONE SEDE */}
+               <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6 flex flex-col md:flex-row justify-between items-center gap-4">
+                   <div>
+                       <h2 className="text-xl font-bold text-white">Configura Orari</h2>
+                       <p className="text-sm text-slate-400">Gestisci orari standard e eccezioni per data.</p>
                    </div>
+                   <div className="flex gap-2">
+                       <select 
+                            className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
+                            value={selectedScheduleSportId}
+                            onChange={(e) => {
+                                const newSportId = e.target.value;
+                                setSelectedScheduleSportId(newSportId);
+                                const sport = config.sports.find(s => s.id === newSportId);
+                                if(sport && sport.locations.length > 0) {
+                                    setSelectedScheduleLocId(sport.locations[0].id);
+                                } else {
+                                    setSelectedScheduleLocId('');
+                                }
+                            }}
+                        >
+                            <option value="" disabled>Seleziona Sport</option>
+                            {config.sports.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                        <select 
+                            className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
+                            value={selectedScheduleLocId}
+                            onChange={(e) => setSelectedScheduleLocId(e.target.value)}
+                            disabled={!selectedScheduleSportId}
+                        >
+                            <option value="" disabled>Seleziona Sede</option>
+                            {config.sports.find(s => s.id === selectedScheduleSportId)?.locations.map(l => (
+                                <option key={l.id} value={l.id}>{l.name}</option>
+                            ))}
+                        </select>
+                   </div>
+               </div>
 
-                   {editingSchedule ? (
-                    <>
-                        <div className="p-6 bg-slate-800/30 border-b border-slate-700 flex justify-between items-center">
-                            <span className="text-sm text-slate-300 font-medium">Intervallo Slot</span>
-                            <div className="flex items-center gap-3 bg-slate-900 p-2 rounded-lg border border-slate-700">
-                                <button onClick={() => setEditingSlotInterval(60)} className={`px-3 py-1 rounded text-xs font-bold transition-all ${editingSlotInterval === 60 ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>60m</button>
-                                <button onClick={() => setEditingSlotInterval(30)} className={`px-3 py-1 rounded text-xs font-bold transition-all ${editingSlotInterval === 30 ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>30m</button>
+               {editingSchedule ? (
+                <>
+                    {/* 2. ORARIO SETTIMANALE STANDARD */}
+                    <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+                        <div className="p-4 bg-slate-800/80 border-b border-slate-700 flex justify-between items-center">
+                            <h3 className="font-bold text-white">Orario Settimanale Standard</h3>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-slate-400 uppercase">Intervallo</span>
+                                <div className="flex items-center gap-1 bg-slate-900 p-1 rounded border border-slate-700">
+                                    <button onClick={() => setEditingSlotInterval(60)} className={`px-2 py-0.5 rounded text-xs font-bold ${editingSlotInterval === 60 ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>60m</button>
+                                    <button onClick={() => setEditingSlotInterval(30)} className={`px-2 py-0.5 rounded text-xs font-bold ${editingSlotInterval === 30 ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>30m</button>
+                                </div>
                             </div>
                         </div>
 
-                        <div className="p-6 space-y-1">
+                        <div className="p-4 space-y-1">
                             {Object.keys(editingSchedule).map((dayKey) => {
                                 const day = dayKey as keyof WeeklySchedule;
                                 const dayData = editingSchedule[day];
                                 return (
-                                    <div key={day} className={`grid grid-cols-12 items-center gap-4 p-3 rounded-lg border transition-all ${dayData.isOpen ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-900/30 border-transparent opacity-60'}`}>
-                                        <div className="col-span-3 font-medium text-slate-200 capitalize flex items-center gap-2">
-                                            <input type="checkbox" checked={dayData.isOpen} onChange={(e) => handleScheduleChange(day, 'isOpen', e.target.checked)} className="w-4 h-4 rounded bg-slate-700 border-slate-600" />
-                                            {dayLabels[day]}
-                                        </div>
-                                        {dayData.isOpen ? (
-                                            <>
-                                                <div className="col-span-4 flex items-center gap-2">
+                                    <div key={day} className={`p-3 rounded-lg border transition-all ${dayData.isOpen ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-900/30 border-transparent opacity-60'}`}>
+                                        <div className="flex flex-wrap items-center gap-4 mb-2">
+                                            <div className="w-32 font-medium text-slate-200 capitalize flex items-center gap-2">
+                                                <input type="checkbox" checked={dayData.isOpen} onChange={(e) => handleScheduleChange(day, 'isOpen', e.target.checked)} className="w-4 h-4 rounded bg-slate-700 border-slate-600" />
+                                                {dayLabels[day]}
+                                            </div>
+                                            {dayData.isOpen && (
+                                                <div className="flex items-center gap-2">
                                                     <input type="time" value={dayData.start} onChange={(e) => handleScheduleChange(day, 'start', e.target.value)} className="bg-slate-900 border border-slate-600 text-white text-sm rounded px-2 py-1" />
-                                                </div>
-                                                <div className="col-span-4 flex items-center gap-2">
+                                                    <span className="text-slate-500">-</span>
                                                     <input type="time" value={dayData.end} onChange={(e) => handleScheduleChange(day, 'end', e.target.value)} className="bg-slate-900 border border-slate-600 text-white text-sm rounded px-2 py-1" />
                                                 </div>
-                                            </>
-                                        ) : <div className="col-span-8 text-xs text-slate-600 italic">Chiuso</div>}
+                                            )}
+                                        </div>
+                                        {dayData.isOpen && (
+                                            <div className="flex flex-wrap gap-2 pl-6">
+                                                {config.sports.find(s => s.id === selectedScheduleSportId)?.lessonTypes.map(lt => (
+                                                    <label key={lt.id} className="flex items-center gap-1 text-xs text-slate-300 bg-slate-900/50 px-2 py-1 rounded border border-slate-700/50 cursor-pointer hover:bg-slate-800">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            checked={!dayData.allowedLessonTypeIds || dayData.allowedLessonTypeIds.length === 0 || dayData.allowedLessonTypeIds.includes(lt.id)}
+                                                            onChange={() => handleLessonTypeToggle(day, lt.id)}
+                                                            className="rounded border-slate-600"
+                                                        />
+                                                        {lt.name}
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}
                         </div>
-                        <div className="p-6 bg-slate-800/50 border-t border-slate-700 flex justify-end">
-                            <Button onClick={handleSaveSchedule}>Salva Orari</Button>
+                        <div className="p-4 bg-slate-800/50 border-t border-slate-700 flex justify-end">
+                            <Button onClick={handleSaveSchedule} className="text-sm">Salva Orario Settimanale</Button>
                         </div>
-                    </>
-                   ) : (
-                       <div className="p-10 text-center text-slate-500">Seleziona uno sport e una sede per configurare gli orari.</div>
-                   )}
-               </div>
+                    </div>
+
+                    {/* 3. ECCEZIONI / DATE SPECIFICHE */}
+                    <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+                        <div className="p-4 bg-slate-800/80 border-b border-slate-700">
+                            <h3 className="font-bold text-white">Date Specifiche / Eccezioni</h3>
+                            <p className="text-xs text-slate-400">Aggiungi regole speciali per giorni specifici (es. aperture straordinarie, chiusure).</p>
+                        </div>
+                        
+                        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
+                            {/* Form Aggiunta */}
+                            <div className="space-y-4">
+                                <label className="block text-xs font-bold uppercase text-slate-500">Aggiungi Eccezione</label>
+                                <input 
+                                    type="date" 
+                                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white"
+                                    value={exceptionDate}
+                                    onChange={(e) => setExceptionDate(e.target.value)}
+                                />
+                                <div className="flex items-center gap-2 p-3 bg-slate-900 rounded border border-slate-700">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={exceptionData.isOpen} 
+                                        onChange={(e) => setExceptionData({...exceptionData, isOpen: e.target.checked})}
+                                        className="w-5 h-5 rounded bg-slate-700 border-slate-600"
+                                    />
+                                    <span className={exceptionData.isOpen ? "text-white font-bold" : "text-slate-500"}>
+                                        {exceptionData.isOpen ? "APERTO" : "CHIUSO"}
+                                    </span>
+                                </div>
+                                {exceptionData.isOpen && (
+                                    <div className="flex gap-2">
+                                        <div className="flex-1">
+                                            <label className="text-xs text-slate-500 block mb-1">Apertura</label>
+                                            <input type="time" value={exceptionData.start} onChange={e => setExceptionData({...exceptionData, start: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white rounded p-2" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <label className="text-xs text-slate-500 block mb-1">Chiusura</label>
+                                            <input type="time" value={exceptionData.end} onChange={e => setExceptionData({...exceptionData, end: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white rounded p-2" />
+                                        </div>
+                                    </div>
+                                )}
+                                <Button onClick={handleSaveException} disabled={!exceptionDate} className="w-full text-sm">Salva Eccezione</Button>
+                            </div>
+
+                            {/* Lista Eccezioni Esistenti */}
+                            <div className="border-l border-slate-700 pl-8 space-y-3 max-h-80 overflow-y-auto">
+                                <label className="block text-xs font-bold uppercase text-slate-500 sticky top-0 bg-slate-800 py-1">Eccezioni Attive</label>
+                                {Object.keys(currentExceptions).length === 0 ? (
+                                    <p className="text-sm text-slate-500 italic">Nessuna eccezione configurata.</p>
+                                ) : (
+                                    Object.entries(currentExceptions).sort().map(([date, data]: [string, DailySchedule]) => (
+                                        <div key={date} className="flex justify-between items-center bg-slate-900 p-3 rounded border border-slate-700">
+                                            <div>
+                                                <div className="font-bold text-white text-sm">{new Date(date).toLocaleDateString('it-IT')}</div>
+                                                <div className="text-xs text-slate-400">
+                                                    {data.isOpen ? `${data.start} - ${data.end}` : <span className="text-red-400">CHIUSO</span>}
+                                                </div>
+                                            </div>
+                                            <button onClick={() => handleDeleteException(date)} className="text-red-400 hover:text-white text-xs px-2 py-1 rounded bg-slate-800 border border-slate-600">
+                                                Elimina
+                                            </button>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </>
+               ) : (
+                   <div className="p-10 text-center text-slate-500 bg-slate-800/30 rounded-xl border border-slate-800">Seleziona uno sport e una sede per configurare gli orari.</div>
+               )}
           </div>
       )}
 
