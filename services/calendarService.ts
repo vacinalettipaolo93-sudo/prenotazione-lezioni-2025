@@ -29,6 +29,11 @@ export const initBookingListener = (callback?: (bookings: Booking[]) => void) =>
 
     const q = query(collection(db, BOOKING_COLLECTION), orderBy('startTime', 'asc'));
     
+    // Initial fetch from cache if available to prevent empty flash
+    if (cachedBookings.length > 0 && callback) {
+        callback(cachedBookings);
+    }
+    
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const loadedBookings: Booking[] = [];
         snapshot.forEach(doc => {
@@ -45,6 +50,27 @@ export const initBookingListener = (callback?: (bookings: Booking[]) => void) =>
 
 export const getBookings = (): Booking[] => {
   return cachedBookings;
+};
+
+export const deleteBooking = async (bookingId: string): Promise<void> => {
+    try {
+        await deleteDoc(doc(db, BOOKING_COLLECTION, bookingId));
+        console.log(`Prenotazione ${bookingId} eliminata.`);
+    } catch (error) {
+        console.error("Errore eliminazione prenotazione:", error);
+        throw error;
+    }
+};
+
+export const updateBooking = async (bookingId: string, updates: Partial<Booking>): Promise<void> => {
+    try {
+        const bookingRef = doc(db, BOOKING_COLLECTION, bookingId);
+        await updateDoc(bookingRef, updates);
+        console.log(`Prenotazione ${bookingId} aggiornata.`);
+    } catch (error) {
+        console.error("Errore aggiornamento prenotazione:", error);
+        throw error;
+    }
 };
 
 export const getAllCalendarEvents = (): CalendarEvent[] => {

@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect } from 'react';
-import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport, LessonType, DailySchedule } from '../types';
-import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase, exportBookingsToGoogle, getBookings, listGoogleCalendars } from '../services/calendarService';
+import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport, LessonType, DailySchedule, Booking } from '../types';
+import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase, exportBookingsToGoogle, getBookings, listGoogleCalendars, deleteBooking, updateBooking, initBookingListener } from '../services/calendarService';
 import { getAppConfig, addSport, updateSport, removeSport, addSportLocation, updateSportLocation, removeSportLocation, addSportLessonType, removeSportLessonType, addSportDuration, removeSportDuration, updateHomeConfig, updateMinBookingNotice, initConfigListener, updateImportBusyCalendars, updateLocationException } from '../services/configService';
 import { logout } from '../services/authService';
 import Button from './Button';
@@ -10,8 +11,9 @@ interface AdminDashboardProps {
 }
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'calendar' | 'config' | 'schedule' | 'home'>('calendar');
+  const [activeTab, setActiveTab] = useState<'calendar' | 'config' | 'schedule' | 'home' | 'bookings'>('calendar');
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [rawBookings, setRawBookings] = useState<Booking[]>([]);
   const [isConnected, setIsConnected] = useState(isCalendarConnected());
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -53,6 +55,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [exceptionData, setExceptionData] = useState<DailySchedule>({ isOpen: true, start: '09:00', end: '22:00', allowedLessonTypeIds: [] });
   const [currentExceptions, setCurrentExceptions] = useState<Record<string, DailySchedule>>({});
 
+  // --- BOOKING EDIT STATE ---
+  const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
+  const [editDate, setEditDate] = useState('');
+  const [editTime, setEditTime] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   useEffect(() => {
     const init = async () => {
         await initGoogleClient();
@@ -63,7 +71,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     };
     init();
     
-    const unsub = initConfigListener((newConfig) => {
+    // Subscribe to config changes
+    const unsubConfig = initConfigListener((newConfig) => {
         setConfig(newConfig);
         setHomeTitle(newConfig.homeTitle);
         setHomeSubtitle(newConfig.homeSubtitle);
@@ -73,9 +82,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         }
     });
 
-    refreshEvents();
+    // Subscribe to REAL-TIME booking changes
+    const unsubBookings = initBookingListener((newBookings) => {
+        setEvents(getAllCalendarEvents());
+        setRawBookings(newBookings.filter(b => b.sportName !== 'EXTERNAL_BUSY').sort((a,b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()));
+    });
 
-    return () => unsub();
+    return () => {
+        unsubConfig();
+        unsubBookings();
+    };
   }, []);
 
   useEffect(() => {
@@ -110,11 +126,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       }
   }, [selectedScheduleSportId, selectedScheduleLocId, config.sports]);
 
-  const refreshEvents = () => {
-    setEvents(getAllCalendarEvents());
-    setIsConnected(isCalendarConnected());
-  };
-
   const fetchUserCalendars = async () => {
       setLoadingCalendars(true);
       try {
@@ -142,7 +153,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         }
     } finally {
         setIsConnecting(false);
-        refreshEvents();
     }
   };
 
@@ -150,7 +160,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     disconnectGoogleCalendar();
     setIsConnected(false);
     setUserCalendars([]);
-    refreshEvents();
   };
 
   const handleToggleCalendar = (calId: string) => {
@@ -169,7 +178,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           const calendarsToSync = config.importBusyCalendars || selectedCalendarIds;
           const count = await syncGoogleEventsToFirebase(calendarsToSync);
           alert(`Sincronizzazione completata! ${count} impegni importati.`);
-          refreshEvents();
       } catch (e) {
           alert("Errore durante la sincronizzazione.");
       } finally {
@@ -183,11 +191,54 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       try {
           const count = await exportBookingsToGoogle('primary');
           alert(`Successo! ${count} nuove prenotazioni esportate.`);
-          refreshEvents();
       } catch (e) {
           alert("Errore durante l'esportazione.");
       } finally {
           setIsExporting(false);
+      }
+  }
+
+  const handleDeleteBooking = async (e: React.MouseEvent, id: string) => {
+      e.stopPropagation(); // Prevenire click sulla riga se presente
+      if(window.confirm('Sei sicuro di voler eliminare questa prenotazione?')) {
+          setDeletingId(id);
+          try {
+              await deleteBooking(id);
+          } catch(e) {
+              alert('Errore durante l\'eliminazione');
+          } finally {
+              setDeletingId(null);
+          }
+      }
+  };
+
+  const handleOpenEditBooking = (e: React.MouseEvent, booking: Booking) => {
+      e.stopPropagation();
+      setEditingBooking(booking);
+      // Inizializza data e ora
+      const d = new Date(booking.startTime);
+      setEditDate(d.toISOString().split('T')[0]);
+      setEditTime(`${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`);
+  }
+
+  const handleSaveBookingEdit = async () => {
+      if (!editingBooking || !editDate || !editTime) return;
+      try {
+          // Ricostruisci startTime e date
+          const newStart = new Date(`${editDate}T${editTime}`);
+          const isoStartTime = newStart.toISOString();
+          
+          await updateBooking(editingBooking.id, {
+              customerName: editingBooking.customerName,
+              customerEmail: editingBooking.customerEmail,
+              customerPhone: editingBooking.customerPhone,
+              notes: editingBooking.notes,
+              startTime: isoStartTime,
+              date: editDate
+          });
+          setEditingBooking(null);
+      } catch (e) {
+          alert("Errore durante l'aggiornamento.");
       }
   }
 
@@ -313,7 +364,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
+    <div className="max-w-6xl mx-auto px-4 py-8 relative">
       
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-end mb-10 border-b border-slate-800 pb-6 gap-4">
@@ -322,8 +373,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             <p className="text-slate-400 mt-1">Pannello di controllo istruttore</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-            <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700">
+            <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700 overflow-x-auto max-w-[100vw]">
                 <button onClick={() => setActiveTab('calendar')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'calendar' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Calendario</button>
+                <button onClick={() => { setActiveTab('bookings'); }} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'bookings' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Prenotazioni</button>
                 <button onClick={() => setActiveTab('config')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'config' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Offerta</button>
                 <button onClick={() => setActiveTab('schedule')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'schedule' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Orari</button>
                 <button onClick={() => setActiveTab('home')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'home' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Home</button>
@@ -394,6 +446,131 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                      )}
                  </div>
              )}
+          </div>
+      )}
+
+      {/* TAB: BOOKINGS LIST */}
+      {activeTab === 'bookings' && (
+          <div className="animate-in fade-in space-y-6">
+              <div className="flex justify-between items-center">
+                  <h2 className="text-xl font-bold text-white">Elenco Prenotazioni</h2>
+              </div>
+
+              {rawBookings.length === 0 ? (
+                  <div className="text-center py-20 bg-slate-800/50 rounded-xl border border-slate-700 text-slate-500">
+                      Nessuna prenotazione trovata.
+                  </div>
+              ) : (
+                  <div className="space-y-4">
+                      {rawBookings.map((booking) => {
+                          const isPast = new Date(booking.startTime) < new Date();
+                          return (
+                              <div key={booking.id} className={`p-4 rounded-xl border flex flex-col md:flex-row gap-4 justify-between items-start md:items-center ${isPast ? 'bg-slate-900 border-slate-800 opacity-60' : 'bg-slate-800 border-slate-700'}`}>
+                                  <div>
+                                      <div className="flex items-center gap-3 mb-1">
+                                          <span className="font-bold text-lg text-white">{new Date(booking.startTime).toLocaleDateString('it-IT', { day: 'numeric', month: 'long' })}</span>
+                                          <span className="bg-slate-700 text-slate-200 px-2 py-0.5 rounded text-sm font-mono">
+                                              {new Date(booking.startTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                          </span>
+                                          {isPast && <span className="text-xs bg-slate-800 text-slate-500 px-2 py-0.5 rounded border border-slate-700">PASSATA</span>}
+                                      </div>
+                                      <div className="text-slate-300 font-medium">{booking.sportName} - {booking.locationName}</div>
+                                      <div className="text-sm text-slate-400 mt-1">
+                                          <span className="font-bold text-indigo-300">{booking.customerName}</span> • {booking.customerPhone || 'No Tel'} • {booking.customerEmail}
+                                      </div>
+                                      {booking.notes && <div className="text-xs text-slate-500 mt-2 italic bg-slate-900/50 p-2 rounded">"{booking.notes}"</div>}
+                                  </div>
+                                  <div className="flex flex-col items-end gap-2 w-full md:w-auto min-w-[120px]">
+                                      <span className="text-xs bg-slate-900 px-2 py-1 rounded text-slate-400 border border-slate-700 w-full text-center">{booking.lessonTypeName}</span>
+                                      <div className="flex gap-2 w-full">
+                                          <button 
+                                            onClick={(e) => handleOpenEditBooking(e, booking)}
+                                            className="flex-1 text-slate-300 hover:text-white text-xs border border-slate-600 hover:bg-slate-700 px-2 py-1.5 rounded transition-colors"
+                                          >
+                                              Modifica
+                                          </button>
+                                          <button 
+                                            onClick={(e) => handleDeleteBooking(e, booking.id)}
+                                            disabled={deletingId === booking.id}
+                                            className="flex-1 text-red-400 hover:text-red-300 text-xs border border-red-900/50 hover:bg-red-900/20 px-2 py-1.5 rounded transition-colors disabled:opacity-50"
+                                          >
+                                              {deletingId === booking.id ? '...' : 'Elimina'}
+                                          </button>
+                                      </div>
+                                  </div>
+                              </div>
+                          );
+                      })}
+                  </div>
+              )}
+          </div>
+      )}
+
+      {/* EDIT MODAL */}
+      {editingBooking && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
+                  <h3 className="text-xl font-bold text-white mb-4">Modifica Prenotazione</h3>
+                  <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4 bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 mb-2">
+                          <div>
+                              <label className="text-xs text-slate-400 uppercase font-bold">Data</label>
+                              <input 
+                                type="date"
+                                className="w-full bg-slate-800 border border-slate-600 rounded-lg p-2 text-white mt-1"
+                                value={editDate}
+                                onChange={e => setEditDate(e.target.value)}
+                              />
+                          </div>
+                          <div>
+                              <label className="text-xs text-slate-400 uppercase font-bold">Ora</label>
+                              <input 
+                                type="time"
+                                className="w-full bg-slate-800 border border-slate-600 rounded-lg p-2 text-white mt-1"
+                                value={editTime}
+                                onChange={e => setEditTime(e.target.value)}
+                              />
+                          </div>
+                      </div>
+
+                      <div>
+                          <label className="text-xs text-slate-400 uppercase font-bold">Nome Cliente</label>
+                          <input 
+                            className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white mt-1"
+                            value={editingBooking.customerName}
+                            onChange={e => setEditingBooking({...editingBooking, customerName: e.target.value})}
+                          />
+                      </div>
+                      <div>
+                          <label className="text-xs text-slate-400 uppercase font-bold">Telefono</label>
+                          <input 
+                            className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white mt-1"
+                            value={editingBooking.customerPhone || ''}
+                            onChange={e => setEditingBooking({...editingBooking, customerPhone: e.target.value})}
+                          />
+                      </div>
+                      <div>
+                          <label className="text-xs text-slate-400 uppercase font-bold">Email</label>
+                          <input 
+                            className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white mt-1"
+                            value={editingBooking.customerEmail}
+                            onChange={e => setEditingBooking({...editingBooking, customerEmail: e.target.value})}
+                          />
+                      </div>
+                      <div>
+                          <label className="text-xs text-slate-400 uppercase font-bold">Note</label>
+                          <textarea 
+                            className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white mt-1 h-24"
+                            value={editingBooking.notes || ''}
+                            onChange={e => setEditingBooking({...editingBooking, notes: e.target.value})}
+                          />
+                      </div>
+                  </div>
+                  <div className="flex gap-3 mt-6 pt-4 border-t border-slate-700">
+                      <Button variant="ghost" onClick={() => setEditingBooking(null)} className="flex-1">Annulla</Button>
+                      <Button onClick={handleSaveBookingEdit} className="flex-1">Salva Modifiche</Button>
+                  </div>
+              </div>
           </div>
       )}
 
