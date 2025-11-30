@@ -484,12 +484,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                       <span className="text-xs bg-slate-900 px-2 py-1 rounded text-slate-400 border border-slate-700 w-full text-center">{booking.lessonTypeName}</span>
                                       <div className="flex gap-2 w-full">
                                           <button 
+                                            type="button"
                                             onClick={(e) => handleOpenEditBooking(e, booking)}
                                             className="flex-1 text-slate-300 hover:text-white text-xs border border-slate-600 hover:bg-slate-700 px-2 py-1.5 rounded transition-colors"
                                           >
                                               Modifica
                                           </button>
                                           <button 
+                                            type="button"
                                             onClick={(e) => handleDeleteBooking(e, booking.id)}
                                             disabled={deletingId === booking.id}
                                             className="flex-1 text-red-400 hover:text-red-300 text-xs border border-red-900/50 hover:bg-red-900/20 px-2 py-1.5 rounded transition-colors disabled:opacity-50"

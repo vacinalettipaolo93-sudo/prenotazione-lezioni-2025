@@ -2,7 +2,7 @@
 import { TimeSlot, Booking, CalendarEvent, DailySchedule } from '../types';
 import { getAppConfig } from './configService';
 import { db } from './firebase';
-import { collection, addDoc, onSnapshot, query, orderBy, where, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, where, getDocs, deleteDoc, doc, updateDoc, getDoc } from 'firebase/firestore';
 
 // --- CONFIGURAZIONE GOOGLE CALENDAR ---
 const CLIENT_ID = '747839079234-9kb2r0iviapcqci554cfheaksqe3lm29.apps.googleusercontent.com'; 
@@ -14,7 +14,6 @@ const SCOPES = 'https://www.googleapis.com/auth/calendar.events https://www.goog
 const BOOKING_COLLECTION = 'bookings';
 
 let cachedBookings: Booking[] = [];
-let bookingListeners: ((bookings: Booking[]) => void)[] = [];
 
 let tokenClient: any;
 let gapiInited = false;
@@ -24,15 +23,13 @@ let initPromise: Promise<void> | null = null;
 
 // --- REAL-TIME SUBSCRIPTION ---
 
-export const initBookingListener = (callback?: (bookings: Booking[]) => void) => {
-    if (callback) bookingListeners.push(callback);
-
-    const q = query(collection(db, BOOKING_COLLECTION), orderBy('startTime', 'asc'));
-    
+export const initBookingListener = (callback: (bookings: Booking[]) => void) => {
     // Initial fetch from cache if available to prevent empty flash
-    if (cachedBookings.length > 0 && callback) {
+    if (cachedBookings.length > 0) {
         callback(cachedBookings);
     }
+    
+    const q = query(collection(db, BOOKING_COLLECTION), orderBy('startTime', 'asc'));
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const loadedBookings: Booking[] = [];
@@ -40,7 +37,7 @@ export const initBookingListener = (callback?: (bookings: Booking[]) => void) =>
             loadedBookings.push({ id: doc.id, ...doc.data() } as Booking);
         });
         cachedBookings = loadedBookings;
-        bookingListeners.forEach(l => l(loadedBookings));
+        callback(loadedBookings);
     }, (error) => {
         console.error("Errore sync prenotazioni:", error);
     });
@@ -52,10 +49,39 @@ export const getBookings = (): Booking[] => {
   return cachedBookings;
 };
 
+// --- DELETE OPERATIONS ---
+
+export const deleteGoogleEvent = async (calendarId: string, eventId: string) => {
+    const gapi = (window as any).gapi;
+    if (!gapi || !gapi.client || gapi.client.getToken() === null) return;
+    try {
+        await gapi.client.calendar.events.delete({
+            calendarId: calendarId,
+            eventId: eventId
+        });
+        console.log("Evento Google eliminato correttamente.");
+    } catch (e) {
+        console.warn("Impossibile eliminare evento Google (forse già cancellato o permessi mancanti)", e);
+    }
+}
+
 export const deleteBooking = async (bookingId: string): Promise<void> => {
     try {
-        await deleteDoc(doc(db, BOOKING_COLLECTION, bookingId));
-        console.log(`Prenotazione ${bookingId} eliminata.`);
+        // 1. Recupera la prenotazione per vedere se è collegata a Google
+        const docRef = doc(db, BOOKING_COLLECTION, bookingId);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+            const data = docSnap.data() as Booking;
+            // 2. Se c'è un ID evento Google, prova a eliminarlo dal calendario
+            if (data.googleEventId && data.targetCalendarId) {
+                await deleteGoogleEvent(data.targetCalendarId, data.googleEventId);
+            }
+        }
+
+        // 3. Elimina dal database Firebase
+        await deleteDoc(docRef);
+        console.log(`Prenotazione ${bookingId} eliminata dal DB.`);
     } catch (error) {
         console.error("Errore eliminazione prenotazione:", error);
         throw error;
