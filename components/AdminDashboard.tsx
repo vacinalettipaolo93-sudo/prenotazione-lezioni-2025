@@ -114,23 +114,28 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       }
   }, [selectedScheduleSportId, selectedScheduleLocId, config.sports]);
 
-  // Aggregated Exceptions for the selected sport
-  // Explicitly typing the useMemo and aggregated object to fix line 128 error
+  // Aggregated Exceptions for the selected sport, filtering out past dates
   const sportWideExceptions = useMemo<Record<string, Record<string, DailySchedule>>>(() => {
       if (!selectedScheduleSportId) return {};
       const sport = config.sports.find(s => s.id === selectedScheduleSportId);
       if (!sport) return {};
 
+      // Get today's date string for filtering
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayString = today.toISOString().split('T')[0];
+
       const aggregated: Record<string, Record<string, DailySchedule>> = {};
       sport.locations.forEach(loc => {
           if (loc.scheduleExceptions) {
-              // Added explicit type casting for Object.entries to ensure 'schedule' is correctly inferred as DailySchedule
               (Object.entries(loc.scheduleExceptions) as [string, DailySchedule][]).forEach(([date, schedule]) => {
-                  if (!aggregated[date]) {
-                      aggregated[date] = {};
+                  // FILTER: Only show exceptions from today onwards
+                  if (date >= todayString) {
+                      if (!aggregated[date]) {
+                          aggregated[date] = {};
+                      }
+                      aggregated[date][loc.id] = schedule;
                   }
-                  // Line 128 fix: schedule is now explicitly typed via the cast above, preventing the '{}' to DailySchedule assignment error.
-                  aggregated[date][loc.id] = schedule;
               });
           }
       });
@@ -421,7 +426,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                      <div className="flex justify-between items-center mb-4">
                          <h3 className="font-bold text-white">Calendari "Occupati" (Import)</h3>
                          <button onClick={fetchUserCalendars} disabled={loadingCalendars} className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1">
-                             <svg className={`w-4 h-4 ${loadingCalendars ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                             <svg className={`w-4 h-4 ${loadingCalendars ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357-2H15"></path></svg>
                              Aggiorna Lista
                          </button>
                      </div>
@@ -690,9 +695,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                             </div>
 
                             <div className="border-l border-slate-700 pl-8 space-y-3 max-h-96 overflow-y-auto">
-                                <label className="block text-xs font-bold uppercase text-slate-500 sticky top-0 bg-slate-800 py-1 z-10">Eccezioni Attive (Tutto lo Sport)</label>
+                                <label className="block text-xs font-bold uppercase text-slate-500 sticky top-0 bg-slate-800 py-1 z-10">Eccezioni Attive (Prossimamente)</label>
                                 {Object.keys(sportWideExceptions).length === 0 ? (
-                                    <p className="text-sm text-slate-500 italic">Nessuna eccezione configurata.</p>
+                                    <p className="text-sm text-slate-500 italic">Nessuna eccezione configurata (o quelle vecchie sono state rimosse).</p>
                                 ) : (
                                     Object.entries(sportWideExceptions).sort().map(([date, locMap]) => {
                                         const sport = config.sports.find(s => s.id === selectedScheduleSportId);
