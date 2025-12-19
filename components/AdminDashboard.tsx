@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport, LessonType, DailySchedule, Booking } from '../types';
 import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase, exportBookingsToGoogle, listGoogleCalendars, deleteBooking, updateBooking, initBookingListener } from '../services/calendarService';
 import { getAppConfig, addSport, updateSport, removeSport, addSportLocation, updateSportLocation, removeSportLocation, addSportLessonType, removeSportLessonType, addSportDuration, removeSportDuration, updateHomeConfig, updateMinBookingNotice, initConfigListener, updateImportBusyCalendars, updateLocationException, updateMultipleLocationsExceptions } from '../services/configService';
@@ -47,7 +47,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   // Exception Management State
   const [exceptionDate, setExceptionDate] = useState<string>('');
   const [exceptionData, setExceptionData] = useState<DailySchedule>({ isOpen: true, start: '09:00', end: '22:00', allowedLessonTypeIds: [] });
-  const [currentExceptions, setCurrentExceptions] = useState<Record<string, DailySchedule>>({});
   const [applyToAllLocs, setApplyToAllLocs] = useState(false);
 
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
@@ -109,12 +108,34 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           if (loc) {
               setEditingSchedule(loc.schedule);
               setEditingSlotInterval(loc.slotInterval);
-              setCurrentExceptions(loc.scheduleExceptions || {});
           } else {
               setEditingSchedule(null);
           }
       }
   }, [selectedScheduleSportId, selectedScheduleLocId, config.sports]);
+
+  // Aggregated Exceptions for the selected sport
+  // Explicitly typing the useMemo and aggregated object to fix line 128 error
+  const sportWideExceptions = useMemo<Record<string, Record<string, DailySchedule>>>(() => {
+      if (!selectedScheduleSportId) return {};
+      const sport = config.sports.find(s => s.id === selectedScheduleSportId);
+      if (!sport) return {};
+
+      const aggregated: Record<string, Record<string, DailySchedule>> = {};
+      sport.locations.forEach(loc => {
+          if (loc.scheduleExceptions) {
+              // Added explicit type casting for Object.entries to ensure 'schedule' is correctly inferred as DailySchedule
+              (Object.entries(loc.scheduleExceptions) as [string, DailySchedule][]).forEach(([date, schedule]) => {
+                  if (!aggregated[date]) {
+                      aggregated[date] = {};
+                  }
+                  // Line 128 fix: schedule is now explicitly typed via the cast above, preventing the '{}' to DailySchedule assignment error.
+                  aggregated[date][loc.id] = schedule;
+              });
+          }
+      });
+      return aggregated;
+  }, [selectedScheduleSportId, config.sports]);
 
   const fetchUserCalendars = async () => {
       setLoadingCalendars(true);
@@ -314,10 +335,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       setExceptionDate('');
   }
 
-  const handleDeleteException = (date: string) => {
-      if (!selectedScheduleSportId || !selectedScheduleLocId) return;
-      if(window.confirm('Rimuovere questa eccezione per questa sede?')) {
-          updateLocationException(selectedScheduleSportId, selectedScheduleLocId, date, null);
+  const handleDeleteException = (date: string, locIds: string[]) => {
+      if (!selectedScheduleSportId) return;
+      const msg = locIds.length > 1 
+        ? `Rimuovere questa eccezione da TUTTE le sedi interessate (${locIds.length})?` 
+        : `Rimuovere questa eccezione per questa sede?`;
+        
+      if(window.confirm(msg)) {
+          if (locIds.length > 1) {
+              updateMultipleLocationsExceptions(selectedScheduleSportId, locIds, date, null);
+          } else {
+              updateLocationException(selectedScheduleSportId, locIds[0], date, null);
+          }
       }
   }
 
@@ -556,7 +585,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </div>
       )}
 
-      {/* TAB: SCHEDULE (CON ECCEZIONI MIGLIORATE) */}
+      {/* TAB: SCHEDULE (ECCEZIONI MIGLIORATE) */}
       {activeTab === 'schedule' && (
           <div className="max-w-4xl mx-auto animate-in fade-in space-y-6">
                <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6 flex flex-col md:flex-row justify-between items-center gap-4">
@@ -660,22 +689,44 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                 <Button onClick={handleSaveException} disabled={!exceptionDate} className="w-full">Salva Regola</Button>
                             </div>
 
-                            <div className="border-l border-slate-700 pl-8 space-y-3 max-h-80 overflow-y-auto">
-                                <label className="block text-xs font-bold uppercase text-slate-500 sticky top-0 bg-slate-800 py-1">Eccezioni Attive (Sede Selezionata)</label>
-                                {Object.keys(currentExceptions).length === 0 ? (
-                                    <p className="text-sm text-slate-500 italic">Nessuna eccezione configurata per questa sede.</p>
+                            <div className="border-l border-slate-700 pl-8 space-y-3 max-h-96 overflow-y-auto">
+                                <label className="block text-xs font-bold uppercase text-slate-500 sticky top-0 bg-slate-800 py-1 z-10">Eccezioni Attive (Tutto lo Sport)</label>
+                                {Object.keys(sportWideExceptions).length === 0 ? (
+                                    <p className="text-sm text-slate-500 italic">Nessuna eccezione configurata.</p>
                                 ) : (
-                                    Object.entries(currentExceptions).sort().map(([date, data]: [string, DailySchedule]) => (
-                                        <div key={date} className={`flex justify-between items-center p-3 rounded border ${data.isOpen ? 'bg-slate-900 border-slate-700' : 'bg-red-900/20 border-red-500/30'}`}>
-                                            <div>
-                                                <div className="font-bold text-white text-sm">{new Date(date).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
-                                                <div className={`text-xs font-medium ${data.isOpen ? 'text-emerald-400' : 'text-red-400'}`}>
-                                                    {data.isOpen ? `Aperto: ${data.start} - ${data.end}` : "CHIUSO TUTTO IL GIORNO"}
+                                    Object.entries(sportWideExceptions).sort().map(([date, locMap]) => {
+                                        const sport = config.sports.find(s => s.id === selectedScheduleSportId);
+                                        const totalLocs = sport?.locations.length || 0;
+                                        const locIds = Object.keys(locMap);
+                                        const affectedLocsCount = locIds.length;
+                                        
+                                        // Take the first schedule to display data
+                                        const data = locMap[locIds[0]];
+                                        
+                                        // Check if it's the same schedule for all locations of this sport
+                                        const isAllLocs = affectedLocsCount === totalLocs;
+                                        const affectedLocNames = locIds.map(id => sport?.locations.find(l => l.id === id)?.name).join(', ');
+
+                                        return (
+                                            <div key={date} className={`flex justify-between items-center p-3 rounded border ${data.isOpen ? 'bg-slate-900 border-slate-700' : 'bg-red-900/20 border-red-500/30'}`}>
+                                                <div className="flex-1 min-w-0 pr-2">
+                                                    <div className="font-bold text-white text-sm">{new Date(date).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+                                                    <div className={`text-xs font-medium mb-1 ${data.isOpen ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                        {data.isOpen ? `Aperto: ${data.start} - ${data.end}` : "CHIUSO TUTTO IL GIORNO"}
+                                                    </div>
+                                                    <div className="text-[10px] text-slate-400 uppercase font-bold truncate">
+                                                        {isAllLocs ? "Sedi: TUTTE LE SEDI" : `Sedi: ${affectedLocNames}`}
+                                                    </div>
                                                 </div>
+                                                <button 
+                                                    onClick={() => handleDeleteException(date, locIds)} 
+                                                    className="text-red-400 hover:text-white text-[10px] px-2 py-1 rounded border border-red-500/20 hover:bg-red-500/20 flex-shrink-0"
+                                                >
+                                                    Elimina
+                                                </button>
                                             </div>
-                                            <button onClick={() => handleDeleteException(date)} className="text-red-400 hover:text-white text-xs px-2 py-1 rounded border border-red-500/20 hover:bg-red-500/20">Elimina</button>
-                                        </div>
-                                    ))
+                                        );
+                                    })
                                 )}
                             </div>
                         </div>
