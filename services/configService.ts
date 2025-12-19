@@ -56,7 +56,7 @@ const DEFAULT_CONFIG: AppConfig = {
                 address: 'Via Milano 42',
                 schedule: JSON.parse(JSON.stringify(DEFAULT_SCHEDULE)),
                 scheduleExceptions: {},
-                slotInterval: 60, // Usually shorter for Padel
+                slotInterval: 60, 
                 googleCalendarId: ''
             }
         ],
@@ -175,7 +175,7 @@ export const removeSport = (sportId: string) => {
     saveAppConfig(config);
 };
 
-// --- NESTED CONFIG MANAGEMENT (Locations, Types, Durations INSIDE Sport) ---
+// --- NESTED CONFIG MANAGEMENT ---
 
 export const addSportLocation = (sportId: string, name: string, address: string) => {
     const config = getAppConfig();
@@ -206,7 +206,6 @@ export const updateSportLocation = (sportId: string, locId: string, updates: Par
     }
 }
 
-// Nuova funzione per aggiungere/modificare un'eccezione
 export const updateLocationException = (sportId: string, locId: string, date: string, schedule: DailySchedule | null) => {
     const config = getAppConfig();
     const sport = config.sports.find(s => s.id === sportId);
@@ -217,14 +216,31 @@ export const updateLocationException = (sportId: string, locId: string, date: st
             if (!loc.scheduleExceptions) loc.scheduleExceptions = {};
             
             if (schedule === null) {
-                // Rimuovi eccezione
                 delete loc.scheduleExceptions[date];
             } else {
-                // Aggiungi/Aggiorna eccezione
                 loc.scheduleExceptions[date] = schedule;
             }
             saveAppConfig(config);
         }
+    }
+}
+
+export const updateMultipleLocationsExceptions = (sportId: string, locIds: string[], date: string, schedule: DailySchedule | null) => {
+    const config = getAppConfig();
+    const sport = config.sports.find(s => s.id === sportId);
+    if (sport) {
+        locIds.forEach(id => {
+            const loc = sport.locations.find(l => l.id === id);
+            if (loc) {
+                if (!loc.scheduleExceptions) loc.scheduleExceptions = {};
+                if (schedule === null) {
+                    delete loc.scheduleExceptions[date];
+                } else {
+                    loc.scheduleExceptions[date] = { ...schedule };
+                }
+            }
+        });
+        saveAppConfig(config);
     }
 }
 
