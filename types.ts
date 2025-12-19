@@ -28,46 +28,52 @@ export interface WeeklySchedule {
   sunday: DailySchedule;
 }
 
+// Location is now nested inside Sport
 export interface SportLocation {
   id: string;
   name: string;
   address: string;
-  googleCalendarId?: string; 
-  schedule: WeeklySchedule; 
-  scheduleExceptions?: Record<string, DailySchedule>; 
+  googleCalendarId?: string; // ID del calendario specifico per questo sport in questa sede
+  schedule: WeeklySchedule; // Orari standard settimanali
+  scheduleExceptions?: Record<string, DailySchedule>; // ECCEZIONI: Key è "YYYY-MM-DD"
   slotInterval: 30 | 60;
 }
 
 export interface LessonType {
   id: string;
-  name: string; 
+  name: string; // es. "Lezione Singola", "Doppio", "Partita"
   price?: number;
 }
 
 export interface Sport {
   id: string;
   name: string;
-  emoji: string; 
+  emoji: string; // Icona visiva
   description: string;
+  // Nested Configuration
   locations: SportLocation[];
   lessonTypes: LessonType[];
-  durations: number[]; 
+  durations: number[]; // Array of minutes allowed, e.g. [60, 90]
 }
 
 export interface AppConfig {
   homeTitle: string;
   homeSubtitle: string;
-  sports: Sport[]; 
-  minBookingNoticeMinutes: number; 
-  importBusyCalendars?: string[]; 
+  sports: Sport[]; // All config is now here
+  minBookingNoticeMinutes: number; // Tempo minimo di preavviso in minuti
+  importBusyCalendars?: string[]; // Lista ID calendari da cui importare impegni (Global busy check)
+  
+  // Deprecated global fields (kept for type safety during migration if needed, but unused in new logic)
+  locations?: any[]; 
+  durations?: any[];
 }
 
 // --- BOOKING TYPES ---
 
 export interface TimeSlot {
   id: string;
-  startTime: string; 
-  endTime: string; 
+  startTime: string; // ISO string
+  endTime: string; // ISO string
   isAvailable: boolean;
 }
 
@@ -80,30 +86,30 @@ export interface Booking {
   locationName: string;
   
   lessonTypeId?: string;
-  lessonTypeName?: string; 
+  lessonTypeName?: string; // "Singola", "Doppia"
   
   durationMinutes: number;
-  date: string; 
+  date: string; // YYYY-MM-DD
   timeSlotId: string;
   startTime: string;
   
   customerName: string;
   customerEmail: string;
-  customerPhone?: string; 
+  customerPhone?: string; // Nuovo campo telefono
   skillLevel: 'Beginner' | 'Intermediate' | 'Advanced';
   notes?: string;
   
   aiLessonPlan?: string;
-  targetCalendarId?: string; 
-  googleEventId?: string; 
+  targetCalendarId?: string; // ID del calendario dove è stata salvata la prenotazione
+  googleEventId?: string; // ID dell'evento creato su Google Calendar (se sincronizzato)
 }
 
 export interface CalendarEvent {
   id: string;
   title: string;
-  start: string; 
-  end: string; 
-  type: 'APP_BOOKING' | 'EXTERNAL_BUSY' | 'PLAYTOMIC_BUSY'; 
+  start: string; // ISO string
+  end: string; // ISO string
+  type: 'APP_BOOKING' | 'EXTERNAL_BUSY'; 
   description?: string;
 }
 
