@@ -1,0 +1,20 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Regole per le impostazioni (Sport, Orari, Titoli della Home)
+    // Permette a chiunque di leggere la configurazione e scriverla.
+    // In produzione, la 'write' andrebbe limitata all'admin, ma così com'è non scadrà mai.
+    match /settings/{document} {
+      allow read, write: if true; 
+    }
+    
+    // Regole per le prenotazioni (Lezioni inserite dai clienti o dall'istruttore)
+    // Permette a chiunque di vedere i campi occupati e di prenotare.
+    match /bookings/{document} {
+      allow read, create, update, delete: if true;
+    }
+    
+  }
+}

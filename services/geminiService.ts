@@ -2,8 +2,6 @@ import { GoogleGenAI } from "@google/genai";
 import { LessonPlanRequest } from "../types";
 
 // API Key fornita dall'utente
-// NOTA: Se ricevi errori "PermissionDenied" o 403, verifica che questa chiave 
-// abbia "Generative Language API" abilitata in Google Cloud Console.
 const API_KEY = 'AIzaSyAv_qusWIgR7g2C1w1MeLyCNQNghZg9sWA';
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
@@ -24,9 +22,9 @@ export const generateLessonPlan = async (request: LessonPlanRequest): Promise<st
       Tono: Motivante e professionale. Rispondi in Italiano.
     `;
 
-    // Utilizziamo gemini-2.5-flash per task testuali rapidi
+    // Utilizziamo gemini-3-flash-preview per task testuali rapidi e intelligenti
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-flash-preview',
       contents: prompt,
       config: {
         temperature: 0.7,
@@ -36,7 +34,6 @@ export const generateLessonPlan = async (request: LessonPlanRequest): Promise<st
     return response.text || "";
   } catch (error: any) {
     console.error("Gemini API Error - Dettagli:", error);
-    // In caso di errore, restituiamo stringa vuota per nascondere la sezione nell'UI
     return "";
   }
 };
@@ -49,12 +46,11 @@ export const suggestAvailabilitySummary = async (slots: number): Promise<string>
 
     try {
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3-flash-preview',
             contents: prompt,
         });
         return response.text || "Prenota ora la tua lezione!";
     } catch (e) {
-        // Fallback silenzioso per la summary
         return "Prenota ora la tua lezione!";
     }
 }
