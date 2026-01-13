@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport, LessonType, DailySchedule, Booking } from '../types';
-import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase, exportBookingsToGoogle, listGoogleCalendars, deleteBooking, updateBooking, initBookingListener } from '../services/calendarService';
-import { getAppConfig, addSport, updateSport, removeSport, addSportLocation, updateSportLocation, removeSportLocation, addSportLessonType, removeSportLessonType, addSportDuration, removeSportDuration, updateHomeConfig, updateMinBookingNotice, initConfigListener, updateImportBusyCalendars, updateLocationException, updateMultipleLocationsExceptions } from '../services/configService';
+import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase, exportBookingsToGoogle, listGoogleCalendars, deleteBo[...]
+import { getAppConfig, addSport, updateSport, removeSport, addSportLocation, updateSportLocation, removeSportLocation, addSportLessonType, removeSportLessonType, addSportDuration, removeSportDuration,[...]
 import { logout } from '../services/authService';
 import Button from './Button';
 
@@ -319,6 +318,58 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       });
   }
   
+  // Helpers to support multiple periods per day without touching existing backend schema:
+  // We keep these helpers local and non-intrusive: if a day has no periods, we fallback to start/end (retrocompat).
+  const ensurePeriods = (dayData: DailySchedule): DailySchedule => {
+    // Use 'periods' stored as any to avoid type errors if types.ts isn't updated
+    const anyDay: any = dayData as any;
+    if (anyDay.periods && Array.isArray(anyDay.periods) && anyDay.periods.length > 0) {
+      return dayData;
+    }
+    if (dayData.start && dayData.end) {
+      // create a single period from start/end for backward compatibility
+      return { ...dayData, periods: [{ start: dayData.start, end: dayData.end }] as any };
+    }
+    // ensure periods exists
+    return { ...dayData, periods: [] as any };
+  };
+
+  const handleAddPeriod = (day: keyof WeeklySchedule) => {
+    if (!editingSchedule) return;
+    setEditingSchedule(prev => {
+      if (!prev) return prev;
+      const copy: any = { ...prev };
+      const d = ensurePeriods(copy[day]);
+      const periods = [...(d.periods || []), { start: '08:00', end: '12:00' }];
+      copy[day] = { ...d, isOpen: true, periods };
+      return copy;
+    });
+  };
+
+  const handleRemovePeriod = (day: keyof WeeklySchedule, idx: number) => {
+    if (!editingSchedule) return;
+    setEditingSchedule(prev => {
+      if (!prev) return prev;
+      const copy: any = { ...prev };
+      const d = ensurePeriods(copy[day]);
+      const periods = (d.periods || []).filter((_: any, i: number) => i !== idx);
+      copy[day] = { ...d, periods };
+      return copy;
+    });
+  };
+
+  const handlePeriodChange = (day: keyof WeeklySchedule, idx: number, field: 'start' | 'end', value: string) => {
+    if (!editingSchedule) return;
+    setEditingSchedule(prev => {
+      if (!prev) return prev;
+      const copy: any = { ...prev };
+      const d = ensurePeriods(copy[day]);
+      const periods = (d.periods || []).map((p: any, i: number) => i === idx ? { ...p, [field]: value } : p);
+      copy[day] = { ...d, periods };
+      return copy;
+    });
+  };
+
   const handleSaveException = () => {
       if (!selectedScheduleSportId || !exceptionDate) return;
       
@@ -386,11 +437,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </div>
         <div className="flex flex-wrap items-center gap-2">
             <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700 overflow-x-auto max-w-[100vw]">
-                <button onClick={() => setActiveTab('calendar')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'calendar' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Calendario</button>
-                <button onClick={() => { setActiveTab('bookings'); }} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'bookings' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Prenotazioni</button>
-                <button onClick={() => setActiveTab('config')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'config' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Offerta</button>
-                <button onClick={() => setActiveTab('schedule')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'schedule' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Orari</button>
-                <button onClick={() => setActiveTab('home')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'home' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Home</button>
+                <button onClick={() => setActiveTab('calendar')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'calendar' ? 'bg-slate-700 text-white shadow' : 'te[...]
+                <button onClick={() => { setActiveTab('bookings'); }} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'bookings' ? 'bg-slate-700 text-white shadow' : 'bg-slate-900/50 text-slate-300 border-slate-700 hover:border-slate-500'}`}>
+                Prenotazioni
+                </button>
+                <button onClick={() => setActiveTab('config')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'config' ? 'bg-slate-700 text-white shadow' : 'text-s[...]
+                <button onClick={() => setActiveTab('schedule')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'schedule' ? 'bg-slate-700 text-white shadow' : 'te[...]
+                <button onClick={() => setActiveTab('home')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'home' ? 'bg-slate-700 text-white shadow' : 'text-slate[...]
             </div>
             <Button variant="outline" onClick={handleLogout} className="ml-2 border-red-900/50 text-red-400 hover:bg-red-900/20 hover:border-red-500/50">Esci</Button>
         </div>
@@ -426,7 +479,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                      <div className="flex justify-between items-center mb-4">
                          <h3 className="font-bold text-white">Calendari "Occupati" (Import)</h3>
                          <button onClick={fetchUserCalendars} disabled={loadingCalendars} className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1">
-                             <svg className={`w-4 h-4 ${loadingCalendars ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357-2H15"></path></svg>
+                             <svg className={`w-4 h-4 ${loadingCalendars ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="roun[...]
                              Aggiorna Lista
                          </button>
                      </div>
@@ -435,7 +488,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         userCalendars.length > 0 ? (
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-h-40 overflow-y-auto">
                                 {userCalendars.map(cal => (
-                                    <label key={cal.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${config.importBusyCalendars?.includes(cal.id) ? 'bg-indigo-900/20 border-indigo-500/50' : 'bg-slate-900 border-slate-700 hover:border-slate-600'}`}>
+                                    <label key={cal.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${config.importBusyCalendars?.includes(cal.id) ? 'bg-ind[...]
                                         <input 
                                         type="checkbox" 
                                         checked={config.importBusyCalendars?.includes(cal.id)}
@@ -478,7 +531,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       {rawBookings.map((booking) => {
                           const isPast = new Date(booking.startTime) < new Date();
                           return (
-                              <div key={booking.id} className={`p-4 rounded-xl border flex flex-col md:flex-row gap-4 justify-between items-start md:items-center ${isPast ? 'bg-slate-900 border-slate-800 opacity-60' : 'bg-slate-800 border-slate-700'}`}>
+                              <div key={booking.id} className={`p-4 rounded-xl border flex flex-col md:flex-row gap-4 justify-between items-start md:items-center ${isPast ? 'bg-slate-900 border-slate-[...]
                                   <div>
                                       <div className="flex items-center gap-3 mb-1">
                                           <span className="font-bold text-lg text-white">{new Date(booking.startTime).toLocaleDateString('it-IT', { day: 'numeric', month: 'long' })}</span>
@@ -495,8 +548,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                   <div className="flex flex-col items-end gap-2 w-full md:w-auto min-w-[120px]">
                                       <span className="text-xs bg-slate-900 px-2 py-1 rounded text-slate-400 border border-slate-700 w-full text-center">{booking.lessonTypeName}</span>
                                       <div className="flex gap-2 w-full">
-                                          <button onClick={(e) => handleOpenEditBooking(e, booking)} className="flex-1 text-slate-300 hover:text-white text-xs border border-slate-600 hover:bg-slate-700 px-2 py-1.5 rounded transition-colors">Modifica</button>
-                                          <button onClick={(e) => handleDeleteBooking(e, booking.id)} disabled={deletingId === booking.id} className="flex-1 text-red-400 hover:text-red-300 text-xs border border-red-900/50 hover:bg-red-900/20 px-2 py-1.5 rounded transition-colors disabled:opacity-50">
+                                          <button onClick={(e) => handleOpenEditBooking(e, booking)} className="flex-1 text-slate-300 hover:text-white text-xs border border-slate-600 hover:bg-slate-70[...]
+                                          <button onClick={(e) => handleDeleteBooking(e, booking.id)} disabled={deletingId === booking.id} className="flex-1 text-red-400 hover:text-red-300 text-xs bor[...]
                                               {deletingId === booking.id ? '...' : 'Elimina'}
                                           </button>
                                       </div>
@@ -546,7 +599,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     <p className="text-sm text-slate-400">Preavviso minimo prenotazione (ore)</p>
                 </div>
                 <div className="flex items-center gap-2">
-                    <input type="number" className="w-20 p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-center" value={noticeHours} onChange={e => setNoticeHours(Number(e.target.value))} />
+                    <input type="number" className="w-20 p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-center" value={noticeHours} onChange={e => setNoticeHours(Number(e.target.v[...]
                     <Button onClick={handleUpdateNotice} className="text-xs">Salva</Button>
                 </div>
              </div>
@@ -554,7 +607,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                  <h3 className="text-xl font-bold text-white">Configurazione Sport</h3>
                  {config.sports.map(sport => (
                      <div key={sport.id} className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-                         <div className="p-4 bg-slate-800 flex items-center justify-between cursor-pointer hover:bg-slate-750" onClick={() => setExpandedSportId(expandedSportId === sport.id ? null : sport.id)}>
+                         <div className="p-4 bg-slate-800 flex items-center justify-between cursor-pointer hover:bg-slate-750" onClick={() => setExpandedSportId(expandedSportId === sport.id ? null : s[...]
                              <div className="flex items-center gap-4">
                                  <div className="text-2xl">{sport.emoji}</div>
                                  <h4 className="text-lg font-bold text-white">{sport.name}</h4>
@@ -571,14 +624,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                      {sport.locations.map(loc => (
                                          <div key={loc.id} className="bg-slate-800 p-3 rounded border border-slate-700 text-sm space-y-2">
                                              <div className="flex justify-between items-center text-white font-bold">{loc.name}</div>
-                                             <select className="w-full bg-slate-900 border border-slate-600 rounded text-xs text-slate-300 p-1 mt-2" value={loc.googleCalendarId || ''} onChange={(e) => handleUpdateLocation(sport.id, loc.id, { googleCalendarId: e.target.value })}>
+                                             <select className="w-full bg-slate-900 border border-slate-600 rounded text-xs text-slate-300 p-1 mt-2" value={loc.googleCalendarId || ''} onChange={(e) =>[...]
                                                  <option value="">-- Calendario Default --</option>
                                                  {userCalendars.map(c => <option key={c.id} value={c.id}>{c.summary}</option>)}
                                              </select>
                                          </div>
                                      ))}
                                      <div className="bg-slate-800/50 p-2 rounded border border-slate-700/50 space-y-2">
-                                         <input placeholder="Nome Sede" className="w-full bg-transparent border-b border-slate-600 text-xs p-1 text-white" value={newLocName} onChange={e => setNewLocName(e.target.value)} />
+                                         <input placeholder="Nome Sede" className="w-full bg-transparent border-b border-slate-600 text-xs p-1 text-white" value={newLocName} onChange={e => setNewLocNa[...]
                                          <button onClick={() => handleAddLocation(sport.id)} className="w-full bg-slate-700 hover:bg-slate-600 text-xs text-white py-1 rounded">Aggiungi Sede</button>
                                      </div>
                                  </div>
@@ -612,7 +665,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                             <option value="" disabled>Seleziona Sport</option>
                             {config.sports.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                         </select>
-                        <select className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm" value={selectedScheduleLocId} onChange={(e) => setSelectedScheduleLocId(e.target.value)} disabled={!selectedScheduleSportId}>
+                        <select className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm" value={selectedScheduleLocId} onChange={(e) => setSelectedScheduleLocId(e.target.valu[...]
                             <option value="" disabled>Seleziona Sede</option>
                             {config.sports.find(s => s.id === selectedScheduleSportId)?.locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                         </select>
@@ -624,24 +677,40 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     {editingSchedule && (
                         <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
                             <div className="p-4 bg-slate-800/80 border-b border-slate-700 flex justify-between items-center">
-                                <h3 className="font-bold text-white">Orario Settimanale Standard (Sede: {config.sports.find(s => s.id === selectedScheduleSportId)?.locations.find(l => l.id === selectedScheduleLocId)?.name})</h3>
+                                <h3 className="font-bold text-white">Orario Settimanale Standard (Sede: {config.sports.find(s => s.id === selectedScheduleSportId)?.locations.find(l => l.id === selecte[...]
                             </div>
                             <div className="p-4 space-y-1">
                                 {Object.keys(editingSchedule).map((dayKey) => {
                                     const day = dayKey as keyof WeeklySchedule;
-                                    const dayData = editingSchedule[day];
+                                    const rawDayData = editingSchedule[day];
+                                    const dayData = ensurePeriods(rawDayData); // normalize to have periods[]
+                                    const periods: any[] = (dayData as any).periods || [];
                                     return (
                                         <div key={day} className={`p-3 rounded-lg border transition-all ${dayData.isOpen ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-900/30 border-transparent opacity-60'}`}>
-                                            <div className="flex items-center gap-4">
+                                            <div className="flex items-start gap-4">
                                                 <div className="w-32 font-medium text-slate-200 capitalize flex items-center gap-2">
-                                                    <input type="checkbox" checked={dayData.isOpen} onChange={(e) => handleScheduleChange(day, 'isOpen', e.target.checked)} className="w-4 h-4 rounded bg-slate-700 border-slate-600" />
+                                                    <input type="checkbox" checked={dayData.isOpen} onChange={(e) => handleScheduleChange(day, 'isOpen', e.target.checked)} className="w-4 h-4 rounded border-slate-600" />
                                                     {dayLabels[day]}
                                                 </div>
                                                 {dayData.isOpen && (
-                                                    <div className="flex items-center gap-2">
-                                                        <input type="time" value={dayData.start} onChange={(e) => handleScheduleChange(day, 'start', e.target.value)} className="bg-slate-900 border border-slate-600 text-white text-sm rounded px-2 py-1" />
-                                                        <span className="text-slate-500">-</span>
-                                                        <input type="time" value={dayData.end} onChange={(e) => handleScheduleChange(day, 'end', e.target.value)} className="bg-slate-900 border border-slate-600 text-white text-sm rounded px-2 py-1" />
+                                                    <div className="w-full space-y-2">
+                                                        {periods.length === 0 ? (
+                                                          <div className="text-sm text-slate-400 italic">Nessun intervallo configurato — aggiungi uno per iniziare.</div>
+                                                        ) : (
+                                                          periods.map((p: any, idx: number) => (
+                                                            <div key={idx} className="flex items-center gap-2">
+                                                                <input type="time" value={p.start} onChange={(e) => handlePeriodChange(day, idx, 'start', e.target.value)} className="bg-slate-900 border border-slate-600 rounded p-2" />
+                                                                <span className="text-slate-500">-</span>
+                                                                <input type="time" value={p.end} onChange={(e) => handlePeriodChange(day, idx, 'end', e.target.value)} className="bg-slate-900 border border-slate-600 rounded p-2" />
+                                                                <button onClick={() => handleRemovePeriod(day, idx)} className="text-red-400 hover:text-red-300 text-sm px-2">Rimuovi</button>
+                                                            </div>
+                                                          ))
+                                                        )}
+
+                                                        <div className="flex items-center gap-2 mt-2">
+                                                          <button onClick={() => handleAddPeriod(day)} className="px-3 py-1 bg-slate-700 text-sm rounded text-white">+ Aggiungi Intervallo</button>
+                                                          <p className="text-xs text-slate-400 ml-2">Puoi aggiungere più intervalli (es. mattina e pomeriggio).</p>
+                                                        </div>
                                                     </div>
                                                 )}
                                             </div>
@@ -664,10 +733,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
                             <div className="space-y-4">
                                 <label className="block text-xs font-bold uppercase text-slate-500">Nuova Eccezione</label>
-                                <input type="date" className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white" value={exceptionDate} onChange={(e) => setExceptionDate(e.target.value)} />
+                                <input type="date" className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white" value={exceptionDate} onChange={(e) => setExceptionDate(e.target.value[...]
                                 
                                 <div className="flex items-center gap-3 p-4 bg-slate-900 rounded-xl border border-slate-700">
-                                    <input type="checkbox" checked={exceptionData.isOpen} onChange={(e) => setExceptionData({...exceptionData, isOpen: e.target.checked})} className="w-6 h-6 rounded bg-slate-700 border-slate-600 cursor-pointer" id="isOpenCheck" />
+                                    <input type="checkbox" checked={exceptionData.isOpen} onChange={(e) => setExceptionData({...exceptionData, isOpen: e.target.checked})} className="w-6 h-6 rounded bg[...]
                                     <label htmlFor="isOpenCheck" className={`font-bold cursor-pointer text-lg ${exceptionData.isOpen ? "text-emerald-400" : "text-red-400"}`}>
                                         {exceptionData.isOpen ? "APERTO" : "CHIUSO"}
                                     </label>
@@ -677,17 +746,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                     <div className="flex gap-2">
                                         <div className="flex-1">
                                             <label className="text-xs text-slate-500 block mb-1">Dalle</label>
-                                            <input type="time" value={exceptionData.start} onChange={e => setExceptionData({...exceptionData, start: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white rounded p-2" />
+                                            <input type="time" value={exceptionData.start} onChange={e => setExceptionData({...exceptionData, start: e.target.value})} className="w-full bg-slate-900 bo[...]
                                         </div>
                                         <div className="flex-1">
                                             <label className="text-xs text-slate-500 block mb-1">Alle</label>
-                                            <input type="time" value={exceptionData.end} onChange={e => setExceptionData({...exceptionData, end: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white rounded p-2" />
+                                            <input type="time" value={exceptionData.end} onChange={e => setExceptionData({...exceptionData, end: e.target.value})} className="w-full bg-slate-900 border[...]
                                         </div>
                                     </div>
                                 )}
 
                                 <div className="flex items-center gap-2 p-3 bg-indigo-900/10 rounded border border-indigo-500/30">
-                                    <input type="checkbox" checked={applyToAllLocs} onChange={(e) => setApplyToAllLocs(e.target.checked)} className="w-4 h-4 rounded text-indigo-600" id="allLocsCheck" />
+                                    <input type="checkbox" checked={applyToAllLocs} onChange={(e) => setApplyToAllLocs(e.target.checked)} className="w-4 h-4 rounded text-indigo-600" id="allLocsCheck" [...]
                                     <label htmlFor="allLocsCheck" className="text-xs text-slate-300 cursor-pointer">Applica a TUTTE le sedi di questo sport</label>
                                 </div>
 
@@ -713,7 +782,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                         const affectedLocNames = locIds.map(id => sport?.locations.find(l => l.id === id)?.name).join(', ');
 
                                         return (
-                                            <div key={date} className={`flex justify-between items-center p-3 rounded border ${data.isOpen ? 'bg-slate-900 border-slate-700' : 'bg-red-900/20 border-red-500/30'}`}>
+                                            <div key={date} className={`flex justify-between items-center p-3 rounded border ${data.isOpen ? 'bg-slate-900 border-slate-700' : 'bg-red-900/20 border-red[...]
                                                 <div className="flex-1 min-w-0 pr-2">
                                                     <div className="font-bold text-white text-sm">{new Date(date).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
                                                     <div className={`text-xs font-medium mb-1 ${data.isOpen ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -754,7 +823,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         </div>
                         <div>
                             <label className="text-xs text-slate-400 uppercase font-bold mb-2 block">Sottotitolo</label>
-                            <textarea className="w-full p-4 bg-slate-900 border border-slate-600 rounded-lg text-white text-lg h-32 resize-none" value={homeSubtitle} onChange={e => setHomeSubtitle(e.target.value)} />
+                            <textarea className="w-full p-4 bg-slate-900 border border-slate-600 rounded-lg text-white text-lg h-32 resize-none" value={homeSubtitle} onChange={e => setHomeSubtitle(e.t[...]
                         </div>
                         <Button onClick={handleUpdateHome} className="w-full">Salva</Button>
                     </div>
