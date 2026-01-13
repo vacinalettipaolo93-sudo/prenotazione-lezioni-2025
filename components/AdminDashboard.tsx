@@ -338,13 +338,60 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     }
   };
 
+  // NEW: robust save that persists periods array and keeps backward-compatible start/end
   const handleSaveSchedule = () => {
     if (!selectedScheduleSportId || !selectedScheduleLocId || !editingSchedule) return;
-    updateSportLocation(selectedScheduleSportId, selectedScheduleLocId, {
-      schedule: editingSchedule,
-      slotInterval: editingSlotInterval
-    });
-    alert('Orari aggiornati!');
+
+    try {
+      // Build a sanitized schedule to save
+      const sanitized: any = { ...editingSchedule };
+
+      // For each day normalize periods and set start/end
+      (Object.keys(editingSchedule) as (keyof WeeklySchedule)[]).forEach((day) => {
+        const rawDay: any = (editingSchedule as any)[day] || {};
+        // periods from UI (if present) or fallback to start/end
+        const periods: { start: string; end: string }[] =
+          rawDay.periods && Array.isArray(rawDay.periods) && rawDay.periods.length > 0
+            ? rawDay.periods.map((p: any) => ({ start: p.start, end: p.end }))
+            : rawDay.start && rawDay.end
+            ? [{ start: rawDay.start, end: rawDay.end }]
+            : [];
+
+        if (periods.length > 0) {
+          // compute earliest start and latest end
+          const starts = periods.map((p) => p.start).filter(Boolean).sort();
+          const ends = periods.map((p) => p.end).filter(Boolean).sort();
+          sanitized[day] = {
+            ...rawDay,
+            periods,
+            start: starts.length > 0 ? starts[0] : rawDay.start || '',
+            end: ends.length > 0 ? ends[ends.length - 1] : rawDay.end || ''
+          };
+        } else {
+          // keep as closed or with empty values
+          sanitized[day] = {
+            ...rawDay,
+            periods: [],
+            start: rawDay.start || '',
+            end: rawDay.end || ''
+          };
+        }
+      });
+
+      // Logging to help debug if saving doesn't persist
+      console.log('[AdminDashboard] Salvataggio schedule sanitized:', sanitized);
+
+      // Persist to backend (configService)
+      updateSportLocation(selectedScheduleSportId, selectedScheduleLocId, {
+        schedule: sanitized,
+        slotInterval: editingSlotInterval
+      });
+
+      alert('Orari aggiornati!');
+    } catch (err) {
+      console.error('Errore durante il salvataggio orario:', err);
+      alert('Errore durante il salvataggio degli orari. Controlla console per dettagli.');
+    }
   };
 
   const handleScheduleChange = (day: keyof WeeklySchedule, field: 'start' | 'end' | 'isOpen', value: any) => {
