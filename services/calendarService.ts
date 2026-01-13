@@ -564,20 +564,20 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
             }
 
             const event = {
-                'summary': `🎾 ${booking.sportName}: ${booking.customerName}`,
-                'location': booking.locationName,
-                'description': `Cliente: ${booking.customerName} (${booking.customerEmail})\nTelefono: ${booking.customerPhone || 'N/A'}\nTipo: ${booking.lessonTypeName || 'Standard'}\nLivello: ${book[...]
-                'start': {
-                    'dateTime': booking.startTime, 
+                summary: `🎾 ${booking.sportName}: ${booking.customerName}`,
+                location: booking.locationName,
+                description: `Cliente: ${booking.customerName} (${booking.customerEmail || 'N/A'})\nTelefono: ${booking.customerPhone || 'N/A'}\nTipo: ${booking.lessonTypeName || 'Standard'}\nLivello: ${booking.skillLevel || 'N/A'}\nNote: ${booking.notes || 'Nessuna'}`,
+                start: {
+                    dateTime: booking.startTime, 
                 },
-                'end': {
-                    'dateTime': new Date(new Date(booking.startTime).getTime() + booking.durationMinutes * 60000).toISOString(), 
+                end: {
+                    dateTime: new Date(new Date(booking.startTime).getTime() + booking.durationMinutes * 60000).toISOString(), 
                 }
             };
 
             const response = await gapi.client.calendar.events.insert({
-                'calendarId': targetCalendarId,
-                'resource': event
+                calendarId: targetCalendarId,
+                resource: event
             });
 
             if (response.result && response.result.id) {
