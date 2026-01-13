@@ -1,3 +1,4 @@
+
 import { TimeSlot, Booking, CalendarEvent, DailySchedule } from '../types';
 import { getAppConfig } from './configService';
 import { db } from './firebase';
@@ -120,14 +121,9 @@ export const saveBooking = async (booking: Booking): Promise<void> => {
   }
 };
 
-/**
- * getAvailableSlots
- * - Supports multiple periods per day stored in location.schedule (periods array) or in scheduleExceptions.
- * - Falls back to legacy start/end if periods are not present.
- * - Checks existing bookings (cachedBookings) for collisions using booking.locationId and date overlap.
- */
 export const getAvailableSlots = (date: Date, durationMinutes: number, sportId: string, locationId: string, lessonTypeId?: string): TimeSlot[] => {
   const config = getAppConfig();
+  const allEvents = getAllCalendarEvents(); 
   
   // Find the specific location within the sport
   const sport = config.sports.find(s => s.id === sportId);
@@ -158,75 +154,53 @@ export const getAvailableSlots = (date: Date, durationMinutes: number, sportId: 
       }
   }
 
-  // Normalize periods: preferisci daySchedule.periods (nuovo schema), fallback a start/end (schema vecchio)
-  const periods: { start: string; end: string }[] = (daySchedule as any).periods && Array.isArray((daySchedule as any).periods) && (daySchedule as any).periods.length > 0
-    ? (daySchedule as any).periods.map((p: any) => ({ start: p.start, end: p.end }))
-    : (daySchedule.start && daySchedule.end) ? [{ start: daySchedule.start, end: daySchedule.end }] : [];
+  const [startH, startM] = daySchedule.start.split(':').map(Number);
+  const [endH, endM] = daySchedule.end.split(':').map(Number);
 
-  if (periods.length === 0) return [];
+  const dayStart = new Date(date);
+  dayStart.setHours(startH, startM, 0, 0);
+
+  const dayEnd = new Date(date);
+  dayEnd.setHours(endH, endM, 0, 0);
 
   const slots: TimeSlot[] = [];
-  const interval = location.slotInterval || 30; 
+  const interval = location.slotInterval; 
 
   const now = new Date();
   
   // LOGICA PREAVVISO MINIMO
   const minNoticeMinutes = Number(config.minBookingNoticeMinutes) || 0;
+  const earliestAllowedTime = new Date(now.getTime() + minNoticeMinutes * 60000);
 
-  // Prepare bookings to check collisions: only bookings for this location and the selected date
-  const bookingsForDate = cachedBookings.filter(b => {
-    const bDate = b.date || (new Date(b.startTime).toISOString().split('T')[0]);
-    return b.locationId === locationId && bDate === dateString;
-  });
+  let currentSlotStart = new Date(dayStart);
 
-  // For each period, generate slots
-  for (const p of periods) {
-    // Parse hh:mm to numbers
-    const [startH, startM] = p.start.split(':').map(Number);
-    const [endH, endM] = p.end.split(':').map(Number);
+  while (currentSlotStart < dayEnd) {
+      const currentSlotEnd = new Date(currentSlotStart.getTime() + durationMinutes * 60000);
 
-    const periodStart = new Date(date);
-    periodStart.setHours(startH, startM, 0, 0);
+      if (currentSlotEnd > dayEnd) break; 
 
-    const periodEnd = new Date(date);
-    periodEnd.setHours(endH, endM, 0, 0);
+      const slotId = `${date.toISOString().split('T')[0]}-${locationId}-${currentSlotStart.getHours()}-${currentSlotStart.getMinutes()}`;
 
-    // if period ends before it starts skip
-    if (periodEnd <= periodStart) continue;
-
-    // Create slots inside this period
-    let slotStart = new Date(periodStart);
-    while (new Date(slotStart.getTime() + durationMinutes * 60 * 1000) <= periodEnd) {
-      const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60 * 1000);
-
-      // Check min notice
-      if (slotStart.getTime() - now.getTime() < minNoticeMinutes * 60 * 1000) {
-        slotStart = new Date(slotStart.getTime() + interval * 60 * 1000);
-        continue;
-      }
-
-      // Check collisions with bookingsForDate (overlap check)
-      const collides = bookingsForDate.some(b => {
-        const bStart = new Date(b.startTime).getTime();
-        const bEnd = bStart + (b.durationMinutes || 0) * 60000;
-        return !(slotEnd.getTime() <= bStart || slotStart.getTime() >= bEnd);
+      // Controllo sovrapposizioni
+      const isBusy = allEvents.some(event => {
+          const eventStart = new Date(event.start).getTime();
+          const eventEnd = new Date(event.end).getTime();
+          const slotStartTime = currentSlotStart.getTime();
+          const slotEndTime = currentSlotEnd.getTime();
+          return (eventStart < slotEndTime && eventEnd > slotStartTime);
       });
 
-      const id = `${dateString} ${slotStart.toISOString()}-${slotEnd.toISOString()}`;
+      const isTooSoon = currentSlotStart < earliestAllowedTime;
+
       slots.push({
-        id,
-        startTime: slotStart.toISOString(),
-        endTime: slotEnd.toISOString(),
-        isAvailable: !collides
+          id: slotId,
+          startTime: currentSlotStart.toISOString(),
+          endTime: currentSlotEnd.toISOString(),
+          isAvailable: !isBusy && !isTooSoon
       });
 
-      // advance by interval (non-overlapping sliding window)
-      slotStart = new Date(slotStart.getTime() + interval * 60 * 1000);
-    }
+      currentSlotStart = new Date(currentSlotStart.getTime() + interval * 60000);
   }
-
-  // Optional: sort slots by start time
-  slots.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 
   return slots;
 };
@@ -564,20 +538,20 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
             }
 
             const event = {
-                summary: `🎾 ${booking.sportName}: ${booking.customerName}`,
-                location: booking.locationName,
-                description: `Cliente: ${booking.customerName} (${booking.customerEmail || 'N/A'})\nTelefono: ${booking.customerPhone || 'N/A'}\nTipo: ${booking.lessonTypeName || 'Standard'}\nLivello: ${booking.skillLevel || 'N/A'}\nNote: ${booking.notes || 'Nessuna'}`,
-                start: {
-                    dateTime: booking.startTime, 
+                'summary': `🎾 ${booking.sportName}: ${booking.customerName}`,
+                'location': booking.locationName,
+                'description': `Cliente: ${booking.customerName} (${booking.customerEmail})\nTelefono: ${booking.customerPhone || 'N/A'}\nTipo: ${booking.lessonTypeName || 'Standard'}\nLivello: ${booking.skillLevel}\nNote: ${booking.notes || 'Nessuna'}\n\nPiano AI: ${booking.aiLessonPlan?.substring(0, 100)}...`,
+                'start': {
+                    'dateTime': booking.startTime, 
                 },
-                end: {
-                    dateTime: new Date(new Date(booking.startTime).getTime() + booking.durationMinutes * 60000).toISOString(), 
+                'end': {
+                    'dateTime': new Date(new Date(booking.startTime).getTime() + booking.durationMinutes * 60000).toISOString(), 
                 }
             };
 
             const response = await gapi.client.calendar.events.insert({
-                calendarId: targetCalendarId,
-                resource: event
+                'calendarId': targetCalendarId,
+                'resource': event
             });
 
             if (response.result && response.result.id) {
