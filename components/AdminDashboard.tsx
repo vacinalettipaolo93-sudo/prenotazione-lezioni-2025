@@ -11,7 +11,8 @@ import {
   listGoogleCalendars,
   deleteBooking,
   updateBooking,
-  saveBooking
+  saveBooking,
+  initBookingListener
 } from '../services/calendarService';
 import {
   getAppConfig,
@@ -35,8 +36,8 @@ import {
 import { logout } from '../services/authService';
 import Button from './Button';
 
-// Import del componente uploader (file da creare: components/AdminPlaytomicUploader.tsx)
-import AdminPlaytomicUploader from './AdminPlaytomicUploader';
+// Import del componente uploader (assicurati di aver creato components/AdminPlaytomicUploader.tsx)
+import AdminPlaytomicUploader, { PlaytomicBlock } from './AdminPlaytomicUploader';
 
 interface AdminDashboardProps {
     onLogout: () => void;
@@ -103,7 +104,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     };
     init();
     
-    const unsubConfig = initConfigListener((newConfig) => {
+    const unsubConfig = initConfigListener((newConfig: AppConfig) => {
         setConfig(newConfig);
         setHomeTitle(newConfig.homeTitle);
         setHomeSubtitle(newConfig.homeSubtitle);
@@ -113,9 +114,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         }
     });
 
-    const unsubBookings = initBookingListener((newBookings) => {
+    const unsubBookings = initBookingListener((newBookings: Booking[]) => {
         setEvents(getAllCalendarEvents());
-        setRawBookings(newBookings.filter(b => b.sportName !== 'EXTERNAL_BUSY').sort((a,b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()));
+        setRawBookings(newBookings.filter((b: Booking) => b.sportName !== 'EXTERNAL_BUSY').sort((a: Booking, b: Booking) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()));
     });
 
     return () => {
@@ -419,7 +420,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const playtomicLocations = useMemo(() => config.sports.flatMap(s => s.locations.map(l => l.name)), [config.sports]);
 
   // Handler che converte i PlaytomicBlock in Booking e salva su Firestore tramite saveBooking
-  const handleCreateBlocks = async (blocks: { start: string; end: string; sport: string; location: string; source?: string; meta?: any }[]) => {
+  const handleCreateBlocks = async (blocks: PlaytomicBlock[]) => {
     if (!blocks || blocks.length === 0) {
       alert('Nessun blocco da salvare.');
       return;
@@ -432,12 +433,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[i];
       try {
-        // match sport by name (case-insensitive)
         const sportMatch = configLocal.sports.find(s => s.name.toLowerCase() === (b.sport || '').toLowerCase());
         let sportId = sportMatch?.id ?? 'external_playtomic';
         const sportName = sportMatch?.name ?? (b.sport || 'Playtomic');
 
-        // match location by name (case-insensitive)
         let locationId = 'external_location';
         let locationName = b.location || 'Playtomic';
         if (sportMatch) {
@@ -453,7 +452,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         const durationMinutes = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000)) || 60;
 
         const booking: Booking = {
-          id: Date.now().toString() + '_' + i, // saveBooking uses addDoc so DB id will be generated
+          id: Date.now().toString() + '_' + i,
           sportId,
           sportName,
           locationId,
@@ -484,7 +483,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   };
 
   // Variante che salva come EXTERNAL_BUSY (oggetti tipo busy importati)
-  const handleCreateBlocksAsExternalBusy = async (blocks: { start: string; end: string; sport: string; location: string; source?: string; meta?: any }[]) => {
+  const handleCreateBlocksAsExternalBusy = async (blocks: PlaytomicBlock[]) => {
     if (!blocks || blocks.length === 0) {
       alert('Nessun blocco da salvare.');
       return;
@@ -500,7 +499,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         const end = new Date(b.end);
         const durationMinutes = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000)) || 60;
 
-        // Create a booking-like object flagged as EXTERNAL_BUSY
         const busy: Booking = {
           id: Date.now().toString() + '_busy_' + i,
           sportId: 'external',
@@ -607,15 +605,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                        <input type="checkbox" checked={saveAsExternalBusy} onChange={(e) => setSaveAsExternalBusy(e.target.checked)} className="mr-2" />
                        Salva come EXTERNAL_BUSY (occupato)
                      </label>
-                     <button onClick={() => { setSaveAsExternalBusy(false); alert('Modalità normale: il sistema tenterà di mappare sport e sedi e salvare prenotazioni di tipo "Blocco Playtomic".'); }} className="text-xs text-slate-400">Info</button>
                    </div>
                  </div>
 
                  <AdminPlaytomicUploader
                    sports={playtomicSports}
                    locations={playtomicLocations}
-                   onCreateBlocks={async (blocks) => {
-                     // Decide quale variante usare in base alla checkbox
+                   onCreateBlocks={async (blocks: PlaytomicBlock[]) => {
                      if (saveAsExternalBusy) {
                        await handleCreateBlocksAsExternalBusy(blocks);
                      } else {
@@ -916,10 +912,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                         const locIds = Object.keys(locMap);
                                         const affectedLocsCount = locIds.length;
                                         
-                                        // Take the first schedule to display data
                                         const data = locMap[locIds[0]];
-                                        
-                                        // Check if it's the same schedule for all locations of this sport
                                         const isAllLocs = affectedLocsCount === totalLocs;
                                         const affectedLocNames = locIds.map(id => sport?.locations.find(l => l.id === id)?.name).join(', ');
 
