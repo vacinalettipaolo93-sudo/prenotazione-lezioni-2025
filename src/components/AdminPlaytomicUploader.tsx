@@ -6,23 +6,19 @@
  * -> visualizzare/validare le prenotazioni lette
  * -> inviare i blocchi al backend (o usare una callback fornita dal componente)
  *
- * Come usare (vedi istruzioni sotto il file):
- * 1) Copia questo file in src/components/AdminPlaytomicUploader.tsx
+ * Come usare:
+ * 1) Copia questo file in src/components/AdminPlaytomicUploader.tsx (o components/AdminPlaytomicUploader.tsx)
  * 2) Importalo nella pagina/view del calendario admin e inseriscilo nella tab desiderata:
- *    import AdminPlaytomicUploader from 'src/components/AdminPlaytomicUploader';
- *    ...
- *    <Tab title="Import Playtomic">
- *      <AdminPlaytomicUploader
- *        // opzionale: callback che verrà chiamata con l'array di blocchi (se non fornita il componente farà POST a /api/admin/calendar/block-slots)
- *        onCreateBlocks={async (blocks) => { await fetch('/api/admin/calendar/block-slots', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ blocks }) }) }}
- *        // opzionale: lista di sedi disponibili per la select (se non passata appare campo testo)
- *        locations={['salo','brescia']}
- *        // opzionale: lista sport
- *        sports={['tennis','padel']}
- *      />
- *    </Tab>
+ *    import AdminPlaytomicUploader from './AdminPlaytomicUploader';
  *
- * Il componente non modifica altri file: è autonomo e si integra tramite props o endpoint REST.
+ * Props:
+ * - onCreateBlocks?: (blocks: PlaytomicBlock[]) => Promise<void> | void
+ *      callback che riceve i blocchi identificati; se non fornita il componente farà POST a createEndpoint
+ * - locations?: string[]  lista di nomi sedi per la select (opz.)
+ * - sports?: string[]     lista di nomi sport per la select (opz.)
+ * - createEndpoint?: string endpoint REST di default per POST (default: /api/admin/calendar/block-slots)
+ *
+ * Nota: il componente NON scrive direttamente su Firebase: espone i blocchi via callback o POST.
  */
 
 import React, { useState, useRef, ChangeEvent } from 'react';
@@ -43,7 +39,6 @@ type Props = {
   onCreateBlocks?: (blocks: PlaytomicBlock[]) => Promise<void> | void;
   locations?: string[]; // opzioni per la select sede
   sports?: string[];    // opzioni per la select sport
-  // default endpoint se onCreateBlocks non fornita:
   createEndpoint?: string;
 };
 
@@ -111,13 +106,12 @@ function guessIsoFromValue(v: string): string | null {
   // se è già ISO-like
   const isoLike = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?/;
   if (isoLike.test(t)) {
-    // ensure seconds and timezone (leave as-is)
     try {
       const d = new Date(t);
       if (!isNaN(d.getTime())) return d.toISOString();
     } catch {}
   }
-  // common Playtomic-like or date+time formats: "2025-01-15 09:30", "15/01/2025 09:30"
+  // common formats
   const spaceDateTime = /^(\d{4}[-/]\d{1,2}[-/]\d{1,2})[ T](\d{1,2}:\d{2})/;
   const dmySpace = /^(\d{1,2}\/\d{1,2}\/\d{4})[ T](\d{1,2}:\d{2})/;
   let m = t.match(spaceDateTime);
@@ -133,23 +127,19 @@ function guessIsoFromValue(v: string): string | null {
     const d = new Date(s);
     if (!isNaN(d.getTime())) return d.toISOString();
   }
-  // try Date parse fallback
   const d = new Date(t);
   if (!isNaN(d.getTime())) return d.toISOString();
   return null;
 }
 
 function mapRowToBlock(row: Record<string, string>, defaults: { sport?: string; location?: string }, filename?: string): PlaytomicBlock | null {
-  // Try common column names
   const keys = Object.keys(row).reduce<Record<string,string>>((acc,k)=>{acc[k.toLowerCase().trim()]=row[k]; return acc;},{});
   const possibleStart = keys['start'] ?? keys['start_time'] ?? keys['from'] ?? keys['begin'] ?? keys['booking_start'] ?? keys['start_datetime'] ?? keys['start date'] ?? keys['datetime'];
   const possibleEnd = keys['end'] ?? keys['end_time'] ?? keys['to'] ?? keys['finish'] ?? keys['booking_end'] ?? keys['end_datetime'] ?? keys['end date'];
   const possibleSport = keys['sport'] ?? keys['activity'] ?? keys['activity_type'];
   const possibleLocation = keys['location'] ?? keys['venue'] ?? keys['centre'] ?? keys['sede'] ?? keys['club'];
-  // Some Playtomic exports may provide date + time in separate columns; attempt naive detection:
   let startIso = guessIsoFromValue(possibleStart ?? '');
   let endIso = guessIsoFromValue(possibleEnd ?? '');
-  // If no end time, maybe duration or start + duration: try 'duration' or 'slot_length'
   if (!endIso) {
     const duration = keys['duration'] ?? keys['slot_length'] ?? keys['length_minutes'];
     if (duration && startIso) {
@@ -159,7 +149,6 @@ function mapRowToBlock(row: Record<string, string>, defaults: { sport?: string; 
       endIso = d.toISOString();
     }
   }
-  // Fallback: if start provided and no end, set end = start + 1 hour
   if (startIso && !endIso) {
     const d = new Date(startIso);
     d.setHours(d.getHours() + 1);
@@ -225,7 +214,6 @@ export default function AdminPlaytomicUploader(props: Props) {
             return out;
           });
         } else if (typeof j === 'object') {
-          // maybe { bookings: [...] }
           const arr = (j as any).bookings ?? (j as any).items ?? (j as any).results ?? [];
           if (Array.isArray(arr)) {
             rows = arr.map((item:any) => {
@@ -251,10 +239,6 @@ export default function AdminPlaytomicUploader(props: Props) {
         setParsedRows(rows);
         const mapped = rows.map(r => mapRowToBlock(r, { sport: overrideSport, location: overrideLocation }, filename)).filter(Boolean) as PlaytomicBlock[];
         setBlocks(mapped);
-      }
-      if (!blocks || blocks.length === 0) {
-        // blocks state update is async; compute mapped above to check
-        // but we've computed mapped in both branches
       }
     } catch (err: any) {
       setErrors([String(err.message || err)]);
