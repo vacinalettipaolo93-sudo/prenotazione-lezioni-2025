@@ -17,7 +17,10 @@ import {
   initGoogleClient,
   syncGoogleEventsToFirebase,
   exportBookingsToGoogle,
-  listGoogleCalendars
+  listGoogleCalendars,
+  initBookingListener,
+  deleteBooking,
+  updateBooking
 } from '../services/calendarService';
 import {
   getAppConfig,
@@ -32,14 +35,11 @@ import {
   addSportDuration,
   removeSportDuration,
   initConfigListener,
-  initBookingListener,
   updateImportBusyCalendars,
   updateMultipleLocationsExceptions,
   updateLocationException,
   updateHomeConfig,
-  updateMinBookingNotice,
-  deleteBooking,
-  updateBooking
+  updateMinBookingNotice
 } from '../services/configService';
 import { logout } from '../services/authService';
 import Button from './Button';
