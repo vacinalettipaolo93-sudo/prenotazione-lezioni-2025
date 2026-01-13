@@ -1,10 +1,42 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport, LessonType, DailySchedule, Booking } from '../types';
-import { getAllCalendarEvents, connectGoogleCalendar, disconnectGoogleCalendar, isCalendarConnected, initGoogleClient, syncGoogleEventsToFirebase, exportBookingsToGoogle, listGoogleCalendars, deleteBooking, updateBooking, initBookingListener } from '../services/calendarService';
-import { getAppConfig, addSport, updateSport, removeSport, addSportLocation, updateSportLocation, removeSportLocation, addSportLessonType, removeSportLessonType, addSportDuration, removeSportDuration, updateHomeConfig, updateMinBookingNotice, initConfigListener, updateImportBusyCalendars, updateLocationException, updateMultipleLocationsExceptions } from '../services/configService';
+import {
+  getAllCalendarEvents,
+  connectGoogleCalendar,
+  disconnectGoogleCalendar,
+  isCalendarConnected,
+  initGoogleClient,
+  syncGoogleEventsToFirebase,
+  exportBookingsToGoogle,
+  listGoogleCalendars,
+  deleteBooking,
+  updateBooking,
+  saveBooking
+} from '../services/calendarService';
+import {
+  getAppConfig,
+  addSport,
+  updateSport,
+  removeSport,
+  addSportLocation,
+  updateSportLocation,
+  removeSportLocation,
+  addSportLessonType,
+  removeSportLessonType,
+  addSportDuration,
+  removeSportDuration,
+  updateHomeConfig,
+  updateMinBookingNotice,
+  updateImportBusyCalendars,
+  updateLocationException,
+  updateMultipleLocationsExceptions,
+  initConfigListener
+} from '../services/configService';
 import { logout } from '../services/authService';
 import Button from './Button';
+
+// Import del componente uploader (file da creare: components/AdminPlaytomicUploader.tsx)
+import AdminPlaytomicUploader from './AdminPlaytomicUploader';
 
 interface AdminDashboardProps {
     onLogout: () => void;
@@ -53,6 +85,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [editDate, setEditDate] = useState('');
   const [editTime, setEditTime] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // NEW: sub-tab in Calendar section to toggle Playtomic importer
+  const [calendarSubTab, setCalendarSubTab] = useState<'google' | 'playtomic'>('google');
+
+  // NEW: option whether to save imported blocks as EXTERNAL_BUSY
+  const [saveAsExternalBusy, setSaveAsExternalBusy] = useState<boolean>(false);
+  const [isImporting, setIsImporting] = useState<boolean>(false);
 
   useEffect(() => {
     const init = async () => {
@@ -375,6 +414,124 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       thursday: 'Giovedì', friday: 'Venerdì', saturday: 'Sabato', sunday: 'Domenica'
   };
 
+  // Prepare arrays for Playtomic uploader
+  const playtomicSports = useMemo(() => config.sports.map(s => s.name), [config.sports]);
+  const playtomicLocations = useMemo(() => config.sports.flatMap(s => s.locations.map(l => l.name)), [config.sports]);
+
+  // Handler che converte i PlaytomicBlock in Booking e salva su Firestore tramite saveBooking
+  const handleCreateBlocks = async (blocks: { start: string; end: string; sport: string; location: string; source?: string; meta?: any }[]) => {
+    if (!blocks || blocks.length === 0) {
+      alert('Nessun blocco da salvare.');
+      return;
+    }
+    setIsImporting(true);
+    const configLocal = getAppConfig();
+    const saved: string[] = [];
+    const failed: string[] = [];
+
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      try {
+        // match sport by name (case-insensitive)
+        const sportMatch = configLocal.sports.find(s => s.name.toLowerCase() === (b.sport || '').toLowerCase());
+        let sportId = sportMatch?.id ?? 'external_playtomic';
+        const sportName = sportMatch?.name ?? (b.sport || 'Playtomic');
+
+        // match location by name (case-insensitive)
+        let locationId = 'external_location';
+        let locationName = b.location || 'Playtomic';
+        if (sportMatch) {
+          const locMatch = sportMatch.locations.find(l => l.name.toLowerCase() === (b.location || '').toLowerCase());
+          if (locMatch) {
+            locationId = locMatch.id;
+            locationName = locMatch.name;
+          }
+        }
+
+        const start = new Date(b.start);
+        const end = new Date(b.end);
+        const durationMinutes = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000)) || 60;
+
+        const booking: Booking = {
+          id: Date.now().toString() + '_' + i, // saveBooking uses addDoc so DB id will be generated
+          sportId,
+          sportName,
+          locationId,
+          locationName,
+          lessonTypeId: undefined,
+          lessonTypeName: 'Blocco Playtomic',
+          durationMinutes,
+          date: start.toISOString().split('T')[0],
+          timeSlotId: 'playtomic_import',
+          startTime: start.toISOString(),
+          customerName: b.source || 'Playtomic import',
+          customerEmail: '',
+          customerPhone: '',
+          skillLevel: 'Beginner',
+          notes: JSON.stringify(b.meta || {})
+        } as Booking;
+
+        await saveBooking(booking);
+        saved.push(booking.startTime);
+      } catch (err) {
+        console.error('Errore salvataggio blocco:', err);
+        failed.push(String(b.start));
+      }
+    }
+
+    setIsImporting(false);
+    alert(`Blocchi salvati: ${saved.length}. Falliti: ${failed.length}.`);
+  };
+
+  // Variante che salva come EXTERNAL_BUSY (oggetti tipo busy importati)
+  const handleCreateBlocksAsExternalBusy = async (blocks: { start: string; end: string; sport: string; location: string; source?: string; meta?: any }[]) => {
+    if (!blocks || blocks.length === 0) {
+      alert('Nessun blocco da salvare.');
+      return;
+    }
+    setIsImporting(true);
+    const saved: string[] = [];
+    const failed: string[] = [];
+
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      try {
+        const start = new Date(b.start);
+        const end = new Date(b.end);
+        const durationMinutes = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000)) || 60;
+
+        // Create a booking-like object flagged as EXTERNAL_BUSY
+        const busy: Booking = {
+          id: Date.now().toString() + '_busy_' + i,
+          sportId: 'external',
+          sportName: 'EXTERNAL_BUSY',
+          locationId: 'all',
+          locationName: b.location || 'Playtomic',
+          lessonTypeId: undefined,
+          lessonTypeName: 'Busy (Playtomic Import)',
+          durationMinutes,
+          date: start.toISOString().split('T')[0],
+          timeSlotId: 'external_playtomic',
+          startTime: start.toISOString(),
+          customerName: b.source || (b.meta?.summary ?? 'Impegno Esterno'),
+          customerEmail: '',
+          customerPhone: '',
+          skillLevel: 'Beginner',
+          notes: JSON.stringify(b.meta || {})
+        } as Booking;
+
+        await saveBooking(busy);
+        saved.push(busy.startTime);
+      } catch (err) {
+        console.error('Errore salvataggio busy block:', err);
+        failed.push(String(b.start));
+      }
+    }
+
+    setIsImporting(false);
+    alert(`Blocchi (EXTERNAL_BUSY) salvati: ${saved.length}. Falliti: ${failed.length}.`);
+  };
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 relative">
       
@@ -386,11 +543,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </div>
         <div className="flex flex-wrap items-center gap-2">
             <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700 overflow-x-auto max-w-[100vw]">
-                <button onClick={() => setActiveTab('calendar')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'calendar' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Calendario</button>
-                <button onClick={() => { setActiveTab('bookings'); }} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'bookings' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Prenotazioni</button>
-                <button onClick={() => setActiveTab('config')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'config' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Offerta</button>
-                <button onClick={() => setActiveTab('schedule')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'schedule' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Orari</button>
-                <button onClick={() => setActiveTab('home')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'home' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>Home</button>
+                <button onClick={() => setActiveTab('calendar')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'calendar' ? 'bg-slate-700 text-white shadow' : 'text-slate-300'}`}>Calendario</button>
+                <button onClick={() => { setActiveTab('bookings'); }} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'bookings' ? 'bg-slate-700 text-white shadow' : 'text-slate-300'}`}>Prenotazioni</button>
+                <button onClick={() => setActiveTab('config')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'config' ? 'bg-slate-700 text-white shadow' : 'text-slate-300'}`}>Config</button>
+                <button onClick={() => setActiveTab('schedule')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'schedule' ? 'bg-slate-700 text-white shadow' : 'text-slate-300'}`}>Orari</button>
+                <button onClick={() => setActiveTab('home')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'home' ? 'bg-slate-700 text-white shadow' : 'text-slate-300'}`}>Home</button>
             </div>
             <Button variant="outline" onClick={handleLogout} className="ml-2 border-red-900/50 text-red-400 hover:bg-red-900/20 hover:border-red-500/50">Esci</Button>
         </div>
@@ -420,13 +577,64 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     )}
                 </div>
              </div>
-             
-             {isConnected && (
+
+             {/* Calendar Sub-Tabs: Google / Playtomic Importer */}
+             <div className="flex gap-2 items-center">
+               <button
+                 onClick={() => setCalendarSubTab('google')}
+                 className={`px-3 py-2 rounded-md text-sm ${calendarSubTab === 'google' ? 'bg-slate-700 text-white' : 'bg-slate-800 text-slate-300'}`}
+               >
+                 Calendari "Occupati"
+               </button>
+               <button
+                 onClick={() => setCalendarSubTab('playtomic')}
+                 className={`px-3 py-2 rounded-md text-sm ${calendarSubTab === 'playtomic' ? 'bg-slate-700 text-white' : 'bg-slate-800 text-slate-300'}`}
+               >
+                 Importa Playtomic
+               </button>
+             </div>
+
+             {/* If Playtomic importer selected, render the uploader (does not change other logic) */}
+             {calendarSubTab === 'playtomic' ? (
+               <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
+                 <div className="flex items-center justify-between mb-4 gap-4">
+                   <div>
+                     <h3 className="font-bold text-white">Importa Playtomic</h3>
+                     <p className="text-sm text-slate-400">Carica CSV/JSON da Playtomic e crea blocchi.</p>
+                   </div>
+                   <div className="flex items-center gap-3">
+                     <label className="text-sm text-slate-300">
+                       <input type="checkbox" checked={saveAsExternalBusy} onChange={(e) => setSaveAsExternalBusy(e.target.checked)} className="mr-2" />
+                       Salva come EXTERNAL_BUSY (occupato)
+                     </label>
+                     <button onClick={() => { setSaveAsExternalBusy(false); alert('Modalità normale: il sistema tenterà di mappare sport e sedi e salvare prenotazioni di tipo "Blocco Playtomic".'); }} className="text-xs text-slate-400">Info</button>
+                   </div>
+                 </div>
+
+                 <AdminPlaytomicUploader
+                   sports={playtomicSports}
+                   locations={playtomicLocations}
+                   onCreateBlocks={async (blocks) => {
+                     // Decide quale variante usare in base alla checkbox
+                     if (saveAsExternalBusy) {
+                       await handleCreateBlocksAsExternalBusy(blocks);
+                     } else {
+                       await handleCreateBlocks(blocks);
+                     }
+                   }}
+                 />
+
+                 {isImporting && <div className="text-sm text-slate-400 mt-2">Import in corso...</div>}
+               </div>
+             ) : (
+               // Existing Google calendars block (unchanged)
+               <>
+               {isConnected && (
                  <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-6">
                      <div className="flex justify-between items-center mb-4">
                          <h3 className="font-bold text-white">Calendari "Occupati" (Import)</h3>
                          <button onClick={fetchUserCalendars} disabled={loadingCalendars} className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1">
-                             <svg className={`w-4 h-4 ${loadingCalendars ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357-2H15"></path></svg>
+                             <svg className={`w-4 h-4 ${loadingCalendars ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6l4 2"/></svg>
                              Aggiorna Lista
                          </button>
                      </div>
@@ -435,7 +643,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         userCalendars.length > 0 ? (
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-h-40 overflow-y-auto">
                                 {userCalendars.map(cal => (
-                                    <label key={cal.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${config.importBusyCalendars?.includes(cal.id) ? 'bg-indigo-900/20 border-indigo-500/50' : 'bg-slate-900 border-slate-700 hover:border-slate-600'}`}>
+                                    <label key={cal.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${config.importBusyCalendars?.includes(cal.id) ? 'bg-indigo-900/10 border-indigo-500/30' : 'bg-slate-800 border-slate-700'}`}>
                                         <input 
                                         type="checkbox" 
                                         checked={config.importBusyCalendars?.includes(cal.id)}
@@ -460,6 +668,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         )
                      )}
                  </div>
+               )}
+               </>
              )}
           </div>
       )}
@@ -478,7 +688,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       {rawBookings.map((booking) => {
                           const isPast = new Date(booking.startTime) < new Date();
                           return (
-                              <div key={booking.id} className={`p-4 rounded-xl border flex flex-col md:flex-row gap-4 justify-between items-start md:items-center ${isPast ? 'bg-slate-900 border-slate-800 opacity-60' : 'bg-slate-800 border-slate-700'}`}>
+                              <div key={booking.id} className={`p-4 rounded-xl border flex flex-col md:flex-row gap-4 justify-between items-start md:items-center ${isPast ? 'bg-slate-900 border-slate-800' : 'bg-slate-800 border-slate-700'}`}>
                                   <div>
                                       <div className="flex items-center gap-3 mb-1">
                                           <span className="font-bold text-lg text-white">{new Date(booking.startTime).toLocaleDateString('it-IT', { day: 'numeric', month: 'long' })}</span>
@@ -495,8 +705,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                   <div className="flex flex-col items-end gap-2 w-full md:w-auto min-w-[120px]">
                                       <span className="text-xs bg-slate-900 px-2 py-1 rounded text-slate-400 border border-slate-700 w-full text-center">{booking.lessonTypeName}</span>
                                       <div className="flex gap-2 w-full">
-                                          <button onClick={(e) => handleOpenEditBooking(e, booking)} className="flex-1 text-slate-300 hover:text-white text-xs border border-slate-600 hover:bg-slate-700 px-2 py-1.5 rounded transition-colors">Modifica</button>
-                                          <button onClick={(e) => handleDeleteBooking(e, booking.id)} disabled={deletingId === booking.id} className="flex-1 text-red-400 hover:text-red-300 text-xs border border-red-900/50 hover:bg-red-900/20 px-2 py-1.5 rounded transition-colors disabled:opacity-50">
+                                          <button onClick={(e) => handleOpenEditBooking(e, booking)} className="flex-1 text-slate-300 hover:text-white text-xs border border-slate-600 hover:bg-slate-700/30 rounded px-2 py-1">Modifica</button>
+                                          <button onClick={(e) => handleDeleteBooking(e, booking.id)} disabled={deletingId === booking.id} className="flex-1 text-red-400 hover:text-red-300 text-xs border border-red-600/30 rounded px-2 py-1">
                                               {deletingId === booking.id ? '...' : 'Elimina'}
                                           </button>
                                       </div>
@@ -527,7 +737,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       </div>
                       <div>
                           <label className="text-xs text-slate-400 uppercase font-bold">Nome Cliente</label>
-                          <input className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white mt-1" value={editingBooking.customerName} onChange={e => setEditingBooking({...editingBooking, customerName: e.target.value})} />
+                          <input className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white mt-1" value={editingBooking.customerName} onChange={e => setEditingBooking({...editingBooking, customerName: e.target.value} as Booking)} />
                       </div>
                   </div>
                   <div className="flex gap-3 mt-6 pt-4 border-t border-slate-700">
@@ -579,6 +789,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                      ))}
                                      <div className="bg-slate-800/50 p-2 rounded border border-slate-700/50 space-y-2">
                                          <input placeholder="Nome Sede" className="w-full bg-transparent border-b border-slate-600 text-xs p-1 text-white" value={newLocName} onChange={e => setNewLocName(e.target.value)} />
+                                         <input placeholder="Indirizzo (opz.)" className="w-full bg-transparent border-b border-slate-600 text-xs p-1 text-white" value={newLocAddr} onChange={e => setNewLocAddr(e.target.value)} />
                                          <button onClick={() => handleAddLocation(sport.id)} className="w-full bg-slate-700 hover:bg-slate-600 text-xs text-white py-1 rounded">Aggiungi Sede</button>
                                      </div>
                                  </div>
@@ -612,7 +823,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                             <option value="" disabled>Seleziona Sport</option>
                             {config.sports.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                         </select>
-                        <select className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm" value={selectedScheduleLocId} onChange={(e) => setSelectedScheduleLocId(e.target.value)} disabled={!selectedScheduleSportId}>
+                        <select className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm" value={selectedScheduleLocId} onChange={(e) => setSelectedScheduleLocId(e.target.value)}>
                             <option value="" disabled>Seleziona Sede</option>
                             {config.sports.find(s => s.id === selectedScheduleSportId)?.locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                         </select>
@@ -634,14 +845,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                         <div key={day} className={`p-3 rounded-lg border transition-all ${dayData.isOpen ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-900/30 border-transparent opacity-60'}`}>
                                             <div className="flex items-center gap-4">
                                                 <div className="w-32 font-medium text-slate-200 capitalize flex items-center gap-2">
-                                                    <input type="checkbox" checked={dayData.isOpen} onChange={(e) => handleScheduleChange(day, 'isOpen', e.target.checked)} className="w-4 h-4 rounded bg-slate-700 border-slate-600" />
+                                                    <input type="checkbox" checked={dayData.isOpen} onChange={(e) => handleScheduleChange(day, 'isOpen', e.target.checked)} className="w-4 h-4 rounded border-slate-600" />
                                                     {dayLabels[day]}
                                                 </div>
                                                 {dayData.isOpen && (
                                                     <div className="flex items-center gap-2">
-                                                        <input type="time" value={dayData.start} onChange={(e) => handleScheduleChange(day, 'start', e.target.value)} className="bg-slate-900 border border-slate-600 text-white text-sm rounded px-2 py-1" />
+                                                        <input type="time" value={dayData.start} onChange={(e) => handleScheduleChange(day, 'start', e.target.value)} className="bg-slate-900 border border-slate-600 rounded p-2" />
                                                         <span className="text-slate-500">-</span>
-                                                        <input type="time" value={dayData.end} onChange={(e) => handleScheduleChange(day, 'end', e.target.value)} className="bg-slate-900 border border-slate-600 text-white text-sm rounded px-2 py-1" />
+                                                        <input type="time" value={dayData.end} onChange={(e) => handleScheduleChange(day, 'end', e.target.value)} className="bg-slate-900 border border-slate-600 rounded p-2" />
                                                     </div>
                                                 )}
                                             </div>
@@ -667,8 +878,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                 <input type="date" className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white" value={exceptionDate} onChange={(e) => setExceptionDate(e.target.value)} />
                                 
                                 <div className="flex items-center gap-3 p-4 bg-slate-900 rounded-xl border border-slate-700">
-                                    <input type="checkbox" checked={exceptionData.isOpen} onChange={(e) => setExceptionData({...exceptionData, isOpen: e.target.checked})} className="w-6 h-6 rounded bg-slate-700 border-slate-600 cursor-pointer" id="isOpenCheck" />
-                                    <label htmlFor="isOpenCheck" className={`font-bold cursor-pointer text-lg ${exceptionData.isOpen ? "text-emerald-400" : "text-red-400"}`}>
+                                    <input type="checkbox" checked={exceptionData.isOpen} onChange={(e) => setExceptionData({...exceptionData, isOpen: e.target.checked})} className="w-6 h-6 rounded" />
+                                    <label className={`font-bold cursor-pointer text-lg ${exceptionData.isOpen ? "text-emerald-400" : "text-red-400"}`}>
                                         {exceptionData.isOpen ? "APERTO" : "CHIUSO"}
                                     </label>
                                 </div>
@@ -677,11 +888,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                     <div className="flex gap-2">
                                         <div className="flex-1">
                                             <label className="text-xs text-slate-500 block mb-1">Dalle</label>
-                                            <input type="time" value={exceptionData.start} onChange={e => setExceptionData({...exceptionData, start: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white rounded p-2" />
+                                            <input type="time" value={exceptionData.start} onChange={e => setExceptionData({...exceptionData, start: e.target.value})} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" />
                                         </div>
                                         <div className="flex-1">
                                             <label className="text-xs text-slate-500 block mb-1">Alle</label>
-                                            <input type="time" value={exceptionData.end} onChange={e => setExceptionData({...exceptionData, end: e.target.value})} className="w-full bg-slate-900 border border-slate-600 text-white rounded p-2" />
+                                            <input type="time" value={exceptionData.end} onChange={e => setExceptionData({...exceptionData, end: e.target.value})} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" />
                                         </div>
                                     </div>
                                 )}
@@ -713,7 +924,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                         const affectedLocNames = locIds.map(id => sport?.locations.find(l => l.id === id)?.name).join(', ');
 
                                         return (
-                                            <div key={date} className={`flex justify-between items-center p-3 rounded border ${data.isOpen ? 'bg-slate-900 border-slate-700' : 'bg-red-900/20 border-red-500/30'}`}>
+                                            <div key={date} className={`flex justify-between items-center p-3 rounded border ${data.isOpen ? 'bg-slate-900 border-slate-700' : 'bg-red-900/20 border-red-700/20'}`}>
                                                 <div className="flex-1 min-w-0 pr-2">
                                                     <div className="font-bold text-white text-sm">{new Date(date).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
                                                     <div className={`text-xs font-medium mb-1 ${data.isOpen ? 'text-emerald-400' : 'text-red-400'}`}>
