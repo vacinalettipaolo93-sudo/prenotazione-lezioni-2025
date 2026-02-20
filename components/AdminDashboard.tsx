@@ -83,7 +83,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [editingSchedule, setEditingSchedule] = useState<WeeklySchedule | null>(null);
   const [editingSlotInterval, setEditingSlotInterval] = useState<30 | 60>(60);
 
-  // Exception Management State (ripristinata come nel primo file)
+  // Exception Management State
   const [exceptionDate, setExceptionDate] = useState<string>('');
   const [exceptionData, setExceptionData] = useState<DailySchedule>({
     isOpen: true,
@@ -93,11 +93,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   });
   const [applyToAllLocs, setApplyToAllLocs] = useState(false);
 
+  // --- AUTO-RECONNECT GOOGLE (ripristinato) ---
+  // L'idea è: initGoogleClient() prova a caricare/inizializzare il client.
+  // Se esiste una sessione/token già salvato dal calendarService, isCalendarConnected() torna true
+  // e quindi ricarichiamo automaticamente i calendari senza chiedere di riconnettere manualmente.
   useEffect(() => {
     const init = async () => {
       await initGoogleClient();
-      setIsConnected(isCalendarConnected());
-      if (isCalendarConnected()) {
+      const connected = isCalendarConnected();
+      setIsConnected(connected);
+
+      if (connected) {
+        // Auto-load calendars on entry (auto-reconnect UX)
         fetchUserCalendars();
       }
     };
@@ -116,14 +123,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     refreshEvents();
 
     return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Keep calendars loaded when connection status changes (e.g. token refresh)
   useEffect(() => {
     if (isConnected && userCalendars.length === 0) {
       fetchUserCalendars();
     }
-  }, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected]);
 
+  // Auto-select first sport/location for schedule tab
   useEffect(() => {
     if (config.sports.length > 0 && !selectedScheduleSportId) {
       const firstSport = config.sports[0];
@@ -134,6 +145,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     }
   }, [config.sports, selectedScheduleSportId]);
 
+  // Load schedule when selection changes
   useEffect(() => {
     if (selectedScheduleSportId && selectedScheduleLocId) {
       const sport = config.sports.find((s) => s.id === selectedScheduleSportId);
@@ -183,7 +195,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       setUserCalendars(cals);
     } catch (e: any) {
       console.error('Could not list calendars', e);
-      if (e.status === 401) setIsConnected(false);
+      // Se il token è scaduto / unauthorized, aggiorniamo lo stato così la UI propone "Connetti"
+      if (e?.status === 401) setIsConnected(false);
     } finally {
       setLoadingCalendars(false);
     }
@@ -194,7 +207,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     try {
       await connectGoogleCalendar();
       setIsConnected(true);
-      fetchUserCalendars();
+      await fetchUserCalendars();
     } catch (e: any) {
       if (e && e.error === 'access_denied') {
         alert('ACCESSO NEGATO: Aggiungi la tua email ai Test Users in Google Cloud Console.');
@@ -392,7 +405,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     });
   };
 
-  // --- EXCEPTIONS (ripristinate) ---
+  // --- EXCEPTIONS ---
   const handleSaveException = () => {
     if (!selectedScheduleSportId || !exceptionDate) return;
 
@@ -926,7 +939,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </div>
       )}
 
-      {/* TAB: SCHEDULE (con eccezioni ripristinate) */}
+      {/* TAB: SCHEDULE */}
       {activeTab === 'schedule' && (
         <div className="max-w-4xl mx-auto animate-in fade-in space-y-6">
           <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
@@ -1060,7 +1073,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             )}
           </div>
 
-          {/* ECCEZIONI E CHIUSURE (ripristinate) */}
           {selectedScheduleSportId && (
             <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
               <div className="p-4 bg-slate-800/80 border-b border-slate-700">
