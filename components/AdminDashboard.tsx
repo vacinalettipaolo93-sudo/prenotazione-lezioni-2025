@@ -50,7 +50,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>([]);
   const [loadingCalendars, setLoadingCalendars] = useState(false);
 
-  // --- NEW STATE FOR NESTED CONFIG ---
   const [expandedSportId, setExpandedSportId] = useState<string | null>(null);
 
   // Temp forms for adding nested items
@@ -93,19 +92,79 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   });
   const [applyToAllLocs, setApplyToAllLocs] = useState(false);
 
-  // --- AUTO-RECONNECT GOOGLE (ripristinato) ---
-  // L'idea è: initGoogleClient() prova a caricare/inizializzare il client.
-  // Se esiste una sessione/token già salvato dal calendarService, isCalendarConnected() torna true
-  // e quindi ricarichiamo automaticamente i calendari senza chiedere di riconnettere manualmente.
+  const refreshEvents = () => {
+    setEvents(getAllCalendarEvents());
+    setIsConnected(isCalendarConnected());
+  };
+
+  // FIX: se risulta "Connesso" ma la lista calendari è vuota, prova auto-riconnessione
+  const fetchUserCalendars = async (opts?: { autoReconnect?: boolean }) => {
+    setLoadingCalendars(true);
+    try {
+      const cals = await listGoogleCalendars();
+      setUserCalendars(cals);
+
+      if (opts?.autoReconnect && isCalendarConnected() && (!cals || cals.length === 0)) {
+        try {
+          await connectGoogleCalendar();
+          setIsConnected(true);
+          const cals2 = await listGoogleCalendars();
+          setUserCalendars(cals2);
+        } catch (e) {
+          console.warn('Auto-reconnect failed while calendars list was empty', e);
+        }
+      }
+    } catch (e: any) {
+      console.error('Could not list calendars', e);
+
+      if (e?.status === 401) {
+        setIsConnected(false);
+        setUserCalendars([]);
+
+        if (opts?.autoReconnect) {
+          try {
+            await connectGoogleCalendar();
+            setIsConnected(true);
+            const cals2 = await listGoogleCalendars();
+            setUserCalendars(cals2);
+          } catch (e2) {
+            console.warn('Auto-reconnect failed after 401', e2);
+          }
+        }
+      }
+    } finally {
+      setLoadingCalendars(false);
+    }
+  };
+
+  const handleReconnectCalendar = async () => {
+    setIsConnecting(true);
+    try {
+      await connectGoogleCalendar();
+      setIsConnected(true);
+      await fetchUserCalendars();
+    } catch (e: any) {
+      if (e && e.error === 'access_denied') {
+        alert('ACCESSO NEGATO: Aggiungi la tua email ai Test Users in Google Cloud Console.');
+      } else {
+        alert('Errore riconnessione Google Calendar.');
+      }
+    } finally {
+      setIsConnecting(false);
+      refreshEvents();
+    }
+  };
+
   useEffect(() => {
     const init = async () => {
       await initGoogleClient();
+
       const connected = isCalendarConnected();
       setIsConnected(connected);
 
+      // auto-load (e auto-reconnect se serve)
       if (connected) {
-        // Auto-load calendars on entry (auto-reconnect UX)
-        fetchUserCalendars();
+        fetchUserCalendars({ autoReconnect: true });
       }
     };
     init();
@@ -126,15 +185,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep calendars loaded when connection status changes (e.g. token refresh)
   useEffect(() => {
     if (isConnected && userCalendars.length === 0) {
-      fetchUserCalendars();
+      fetchUserCalendars({ autoReconnect: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected]);
 
-  // Auto-select first sport/location for schedule tab
   useEffect(() => {
     if (config.sports.length > 0 && !selectedScheduleSportId) {
       const firstSport = config.sports[0];
@@ -145,7 +202,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     }
   }, [config.sports, selectedScheduleSportId]);
 
-  // Load schedule when selection changes
   useEffect(() => {
     if (selectedScheduleSportId && selectedScheduleLocId) {
       const sport = config.sports.find((s) => s.id === selectedScheduleSportId);
@@ -182,25 +238,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     });
     return aggregated;
   }, [selectedScheduleSportId, config.sports]);
-
-  const refreshEvents = () => {
-    setEvents(getAllCalendarEvents());
-    setIsConnected(isCalendarConnected());
-  };
-
-  const fetchUserCalendars = async () => {
-    setLoadingCalendars(true);
-    try {
-      const cals = await listGoogleCalendars();
-      setUserCalendars(cals);
-    } catch (e: any) {
-      console.error('Could not list calendars', e);
-      // Se il token è scaduto / unauthorized, aggiorniamo lo stato così la UI propone "Connetti"
-      if (e?.status === 401) setIsConnected(false);
-    } finally {
-      setLoadingCalendars(false);
-    }
-  };
 
   const handleConnectCalendar = async () => {
     setIsConnecting(true);
@@ -272,7 +309,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     const beforeIds = new Set(config.sports.map((s) => s.id));
     addSport(newSportName.trim());
 
-    // best-effort: aggiorna emoji/descrizione sul nuovo sport
     setTimeout(() => {
       const after = getAppConfig();
       const created =
@@ -526,7 +562,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       {/* TAB: CALENDAR */}
       {activeTab === 'calendar' && (
         <div className="space-y-8 animate-in fade-in">
-          <div className={`p-6 rounded-xl border ${isConnected ? 'bg-emerald-900/10 border-emerald-500/30' : 'bg-slate-800 border-slate-700'}`}>
+          <div
+            className={`p-6 rounded-xl border ${
+              isConnected ? 'bg-emerald-900/10 border-emerald-500/30' : 'bg-slate-800 border-slate-700'
+            }`}
+          >
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-4">
                 <div
@@ -548,6 +588,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   </p>
                 </div>
               </div>
+
               {!isConnected ? (
                 <Button onClick={handleConnectCalendar} isLoading={isConnecting}>
                   Connetti
@@ -565,7 +606,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             </div>
 
             {isConnected && (
-              <div className="mt-4 flex justify-end">
+              <div className="mt-4 flex justify-end gap-3">
+                <button onClick={() => fetchUserCalendars({ autoReconnect: true })} className="text-xs text-indigo-300 hover:text-indigo-200">
+                  Ricarica calendari
+                </button>
                 <button onClick={handleDisconnect} className="text-xs text-red-400 hover:text-red-300">
                   Disconnetti Google
                 </button>
@@ -578,7 +622,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
               <div className="flex justify-between items-center mb-4">
                 <h3 className="font-bold text-white">Calendari "Occupati" (Import)</h3>
                 <button
-                  onClick={fetchUserCalendars}
+                  onClick={() => fetchUserCalendars({ autoReconnect: true })}
                   disabled={loadingCalendars}
                   className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
                 >
@@ -622,7 +666,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
               ) : (
                 <div className="text-center py-4 bg-slate-900/30 rounded-lg border border-slate-800">
                   <p className="text-slate-400 text-sm mb-2">Nessun calendario trovato o sessione scaduta.</p>
-                  <Button onClick={handleConnectCalendar} variant="ghost" className="text-xs">
+                  <Button onClick={handleReconnectCalendar} isLoading={isConnecting} variant="ghost" className="text-xs">
                     Riconnetti Account
                   </Button>
                 </div>
@@ -809,12 +853,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                               </div>
                             )}
 
+                            {/* Importante: l’abbinamento calendario sede viene salvato in config via updateSportLocation,
+                                quindi resta persistente (Firebase/Settings) anche se ti disconnetti/riconnetti Google. */}
                             <select
                               className="w-full bg-slate-900 border border-slate-600 rounded text-xs text-slate-300 p-1 mt-2"
                               value={loc.googleCalendarId || ''}
                               onChange={(e) =>
                                 handleUpdateLocation(sport.id, loc.id, { googleCalendarId: e.target.value || undefined })
                               }
+                              disabled={!isConnected || userCalendars.length === 0}
                             >
                               <option value="">-- Calendario Default --</option>
                               {userCalendars.map((c) => (
@@ -823,6 +870,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                 </option>
                               ))}
                             </select>
+
+                            {!isConnected && (
+                              <div className="text-[11px] text-amber-300/90">
+                                Connetti Google per vedere i calendari e abbinarli alle sedi.
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -1164,8 +1217,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         const affectedLocsCount = locIds.length;
 
                         const data = locMap[locIds[0]];
-
                         const isAllLocs = affectedLocsCount === totalLocs;
+
                         const affectedLocNames = locIds
                           .map((id) => sport?.locations.find((l) => l.id === id)?.name)
                           .filter(Boolean)
