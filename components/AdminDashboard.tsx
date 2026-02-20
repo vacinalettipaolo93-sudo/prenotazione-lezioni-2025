@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport, DailySchedule } from '../types';
+import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport, DailySchedule, Booking } from '../types';
 import {
   getAllCalendarEvents,
   connectGoogleCalendar,
@@ -27,7 +27,8 @@ import {
   initConfigListener,
   updateImportBusyCalendars,
   updateLocationException,
-  updateMultipleLocationsExceptions
+  updateMultipleLocationsExceptions,
+  initBookingListener
 } from '../services/configService';
 import { logout } from '../services/authService';
 import Button from './Button';
@@ -37,8 +38,10 @@ interface AdminDashboardProps {
 }
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'calendar' | 'config' | 'schedule' | 'home'>('calendar');
+  const [activeTab, setActiveTab] = useState<'calendar' | 'bookings' | 'config' | 'schedule' | 'home'>('calendar');
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [rawBookings, setRawBookings] = useState<Booking[]>([]);
+
   const [isConnected, setIsConnected] = useState(isCalendarConnected());
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -169,7 +172,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     };
     init();
 
-    const unsub = initConfigListener((newConfig) => {
+    const unsubConfig = initConfigListener((newConfig) => {
       setConfig(newConfig);
       setHomeTitle(newConfig.homeTitle);
       setHomeSubtitle(newConfig.homeSubtitle);
@@ -179,9 +182,24 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       }
     });
 
+    const unsubBookings = initBookingListener((newBookings) => {
+      // Mostra solo quelle NON passate e non "EXTERNAL_BUSY" (se presente)
+      const now = new Date();
+      const filtered = newBookings
+        .filter((b) => (b as any).sportName !== 'EXTERNAL_BUSY')
+        .filter((b) => new Date(b.startTime) >= now)
+        .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+
+      setRawBookings(filtered);
+      setEvents(getAllCalendarEvents());
+    });
+
     refreshEvents();
 
-    return () => unsub();
+    return () => {
+      unsubConfig();
+      unsubBookings();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -515,7 +533,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           <p className="text-slate-400 mt-1">Pannello di controllo istruttore</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700">
+          <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700 overflow-x-auto max-w-[100vw]">
             <button
               onClick={() => setActiveTab('calendar')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
@@ -523,6 +541,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
               }`}
             >
               Calendario
+            </button>
+            <button
+              onClick={() => setActiveTab('bookings')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                activeTab === 'bookings' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Prenotazioni
             </button>
             <button
               onClick={() => setActiveTab('config')}
@@ -671,6 +697,62 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   </Button>
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: BOOKINGS */}
+      {activeTab === 'bookings' && (
+        <div className="animate-in fade-in space-y-6">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-bold text-white">Lezioni Prenotate (da fare)</h2>
+          </div>
+
+          {rawBookings.length === 0 ? (
+            <div className="text-center py-20 bg-slate-800/50 rounded-xl border border-slate-700 text-slate-500">
+              Nessuna prenotazione futura trovata.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {rawBookings.map((booking) => (
+                <div key={booking.id} className="p-4 rounded-xl border bg-slate-800/50 border-slate-700 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
+                  <div>
+                    <div className="flex items-center gap-3 mb-1">
+                      <span className="font-bold text-lg text-white">
+                        {new Date(booking.startTime).toLocaleDateString('it-IT', { day: 'numeric', month: 'long' })}
+                      </span>
+                      <span className="bg-slate-700 text-slate-200 px-2 py-0.5 rounded text-sm font-mono">
+                        {new Date(booking.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+
+                    <div className="text-slate-300 font-medium">
+                      {booking.sportName} - {booking.locationName}
+                    </div>
+
+                    <div className="text-sm text-slate-400 mt-1">
+                      <span className="font-bold text-indigo-300">{booking.customerName}</span>
+                      {booking.customerPhone ? ` • ${booking.customerPhone}` : ''} • {booking.customerEmail}
+                    </div>
+
+                    {booking.notes && (
+                      <div className="text-xs text-slate-500 mt-2">
+                        Note: <span className="text-slate-400">{booking.notes}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col items-end gap-2 w-full md:w-auto min-w-[160px]">
+                    <span className="text-xs bg-slate-900 px-2 py-1 rounded text-slate-400 border border-slate-700 w-full text-center">
+                      {booking.lessonTypeName || 'Tipo lezione'}
+                    </span>
+                    <span className="text-xs bg-slate-900 px-2 py-1 rounded text-slate-400 border border-slate-700 w-full text-center">
+                      {booking.durationMinutes} min
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -853,8 +935,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                               </div>
                             )}
 
-                            {/* Importante: l’abbinamento calendario sede viene salvato in config via updateSportLocation,
-                                quindi resta persistente (Firebase/Settings) anche se ti disconnetti/riconnetti Google. */}
                             <select
                               className="w-full bg-slate-900 border border-slate-600 rounded text-xs text-slate-300 p-1 mt-2"
                               value={loc.googleCalendarId || ''}
@@ -870,12 +950,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                                 </option>
                               ))}
                             </select>
-
-                            {!isConnected && (
-                              <div className="text-[11px] text-amber-300/90">
-                                Connetti Google per vedere i calendari e abbinarli alle sedi.
-                              </div>
-                            )}
                           </div>
                         );
                       })}
