@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { CalendarEvent, AppConfig, WeeklySchedule, SportLocation, Sport, DailySchedule } from '../types';
 import {
   getAllCalendarEvents,
   connectGoogleCalendar,
@@ -25,7 +25,9 @@ import {
   updateHomeConfig,
   updateMinBookingNotice,
   initConfigListener,
-  updateImportBusyCalendars
+  updateImportBusyCalendars,
+  updateLocationException,
+  updateMultipleLocationsExceptions
 } from '../services/configService';
 import { logout } from '../services/authService';
 import Button from './Button';
@@ -81,11 +83,20 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [editingSchedule, setEditingSchedule] = useState<WeeklySchedule | null>(null);
   const [editingSlotInterval, setEditingSlotInterval] = useState<30 | 60>(60);
 
+  // Exception Management State (ripristinata come nel primo file)
+  const [exceptionDate, setExceptionDate] = useState<string>('');
+  const [exceptionData, setExceptionData] = useState<DailySchedule>({
+    isOpen: true,
+    start: '09:00',
+    end: '22:00',
+    allowedLessonTypeIds: []
+  });
+  const [applyToAllLocs, setApplyToAllLocs] = useState(false);
+
   useEffect(() => {
     const init = async () => {
       await initGoogleClient();
       setIsConnected(isCalendarConnected());
-      // Se siamo connessi, fetch calendari immediato
       if (isCalendarConnected()) {
         fetchUserCalendars();
       }
@@ -107,14 +118,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     return () => unsub();
   }, []);
 
-  // Ensure user calendars are loaded if connection status changes
   useEffect(() => {
     if (isConnected && userCalendars.length === 0) {
       fetchUserCalendars();
     }
   }, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-select first sport/location for schedule tab
   useEffect(() => {
     if (config.sports.length > 0 && !selectedScheduleSportId) {
       const firstSport = config.sports[0];
@@ -125,7 +134,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     }
   }, [config.sports, selectedScheduleSportId]);
 
-  // Load schedule when selection changes
   useEffect(() => {
     if (selectedScheduleSportId && selectedScheduleLocId) {
       const sport = config.sports.find((s) => s.id === selectedScheduleSportId);
@@ -138,6 +146,30 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       }
     }
   }, [selectedScheduleSportId, selectedScheduleLocId, config.sports]);
+
+  // Aggregated Exceptions for the selected sport, filtering out past dates
+  const sportWideExceptions = useMemo<Record<string, Record<string, DailySchedule>>>(() => {
+    if (!selectedScheduleSportId) return {};
+    const sport = config.sports.find((s) => s.id === selectedScheduleSportId);
+    if (!sport) return {};
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayString = today.toISOString().split('T')[0];
+
+    const aggregated: Record<string, Record<string, DailySchedule>> = {};
+    sport.locations.forEach((loc) => {
+      if (loc.scheduleExceptions) {
+        (Object.entries(loc.scheduleExceptions) as [string, DailySchedule][]).forEach(([date, schedule]) => {
+          if (date >= todayString) {
+            if (!aggregated[date]) aggregated[date] = {};
+            aggregated[date][loc.id] = schedule;
+          }
+        });
+      }
+    });
+    return aggregated;
+  }, [selectedScheduleSportId, config.sports]);
 
   const refreshEvents = () => {
     setEvents(getAllCalendarEvents());
@@ -224,15 +256,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const handleAddSport = () => {
     if (!newSportName.trim()) return;
 
-    // addSport in questa repo sembra accettare solo name: aggiungo e poi aggiorno meta (emoji/descrizione)
     const beforeIds = new Set(config.sports.map((s) => s.id));
-
     addSport(newSportName.trim());
 
-    // appena il listener aggiorna config, proviamo ad impostare emoji/descrizione sul nuovo sport (best-effort)
+    // best-effort: aggiorna emoji/descrizione sul nuovo sport
     setTimeout(() => {
       const after = getAppConfig();
-      const created = after.sports.find((s) => !beforeIds.has(s.id) && s.name === newSportName.trim()) || after.sports.find((s) => !beforeIds.has(s.id));
+      const created =
+        after.sports.find((s) => !beforeIds.has(s.id) && s.name === newSportName.trim()) ||
+        after.sports.find((s) => !beforeIds.has(s.id));
       if (created) {
         updateSport(created.id, {
           emoji: (newSportEmoji || '🏅').trim(),
@@ -309,10 +341,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
     removeSportLocation(sportId, locId);
 
-    // reset edit state
     if (editingLocId === locId) cancelEditLocation();
 
-    // se era selezionata nel tab orari, ripiega sulla prima sede rimasta
     if (selectedScheduleSportId === sportId && selectedScheduleLocId === locId) {
       const sport = config.sports.find((s) => s.id === sportId);
       const remaining = sport?.locations.filter((l) => l.id !== locId) || [];
@@ -321,7 +351,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   };
 
   const handleUpdateLessonType = (sportId: string, typeId: string, newName: string) => {
-    // Helper to update lesson type name inside the nested array
     const sport = config.sports.find((s) => s.id === sportId);
     if (sport) {
       const newTypes = sport.lessonTypes.map((t) => (t.id === typeId ? { ...t, name: newName } : t));
@@ -361,6 +390,46 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         [day]: { ...prev[day], [field]: value }
       };
     });
+  };
+
+  // --- EXCEPTIONS (ripristinate) ---
+  const handleSaveException = () => {
+    if (!selectedScheduleSportId || !exceptionDate) return;
+
+    const sport = config.sports.find((s) => s.id === selectedScheduleSportId);
+    if (!sport) return;
+
+    if (applyToAllLocs) {
+      const locIds = sport.locations.map((l) => l.id);
+      updateMultipleLocationsExceptions(selectedScheduleSportId, locIds, exceptionDate, exceptionData);
+      alert(`Eccezione applicata a tutte le sedi di ${sport.name}`);
+    } else {
+      if (!selectedScheduleLocId) {
+        alert("Seleziona una sede o attiva 'Applica a tutte le sedi'");
+        return;
+      }
+      updateLocationException(selectedScheduleSportId, selectedScheduleLocId, exceptionDate, exceptionData);
+      alert(`Eccezione salvata per la sede selezionata.`);
+    }
+
+    setExceptionDate('');
+  };
+
+  const handleDeleteException = (date: string, locIds: string[]) => {
+    if (!selectedScheduleSportId) return;
+
+    const msg =
+      locIds.length > 1
+        ? `Rimuovere questa eccezione da TUTTE le sedi interessate (${locIds.length})?`
+        : `Rimuovere questa eccezione per questa sede?`;
+
+    if (window.confirm(msg)) {
+      if (locIds.length > 1) {
+        updateMultipleLocationsExceptions(selectedScheduleSportId, locIds, date, null);
+      } else {
+        updateLocationException(selectedScheduleSportId, locIds[0], date, null);
+      }
+    }
   };
 
   const handleUpdateHome = () => {
@@ -441,7 +510,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </div>
       </div>
 
-      {/* TAB: CALENDAR (Semplificato) */}
+      {/* TAB: CALENDAR */}
       {activeTab === 'calendar' && (
         <div className="space-y-8 animate-in fade-in">
           <div className={`p-6 rounded-xl border ${isConnected ? 'bg-emerald-900/10 border-emerald-500/30' : 'bg-slate-800 border-slate-700'}`}>
@@ -550,10 +619,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </div>
       )}
 
-      {/* TAB: CONFIG (SPORTS & NESTED) */}
+      {/* TAB: CONFIG */}
       {activeTab === 'config' && (
         <div className="animate-in fade-in space-y-8">
-          {/* Global Settings */}
           <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6 flex items-center justify-between gap-4">
             <div>
               <h3 className="font-bold text-white">Regole Globali</h3>
@@ -572,13 +640,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             </div>
           </div>
 
-          {/* Sports List */}
           <div className="space-y-4">
             <h3 className="text-xl font-bold text-white">Configurazione Sport</h3>
 
             {config.sports.map((sport) => (
               <div key={sport.id} className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-                {/* Sport Header */}
                 <div
                   className="p-4 bg-slate-800 flex items-center justify-between cursor-pointer hover:bg-slate-750"
                   onClick={() => setExpandedSportId(expandedSportId === sport.id ? null : sport.id)}
@@ -661,10 +727,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   </div>
                 </div>
 
-                {/* Nested Configuration Body */}
                 {expandedSportId === sport.id && (
                   <div className="p-6 bg-slate-900/50 border-t border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {/* Col 1: Locations */}
                     <div className="space-y-3">
                       <h5 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">Sedi & Calendari</h5>
 
@@ -772,7 +836,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       </div>
                     </div>
 
-                    {/* Col 2: Lesson Types */}
                     <div className="space-y-3">
                       <h5 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">Tipi Lezione</h5>
                       {sport.lessonTypes.map((lt) => (
@@ -800,7 +863,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       </div>
                     </div>
 
-                    {/* Col 3: Durations */}
                     <div className="space-y-3">
                       <h5 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">Durate (min)</h5>
                       <div className="flex flex-wrap gap-2">
@@ -831,7 +893,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
               </div>
             ))}
 
-            {/* Add Sport */}
             <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4 max-w-2xl">
               <div className="text-sm font-bold text-white mb-2">Aggiungi nuovo sport</div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
@@ -865,14 +926,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         </div>
       )}
 
-      {/* TAB: SCHEDULE (Now Location Specific) */}
+      {/* TAB: SCHEDULE (con eccezioni ripristinate) */}
       {activeTab === 'schedule' && (
-        <div className="max-w-4xl mx-auto animate-in fade-in">
+        <div className="max-w-4xl mx-auto animate-in fade-in space-y-6">
           <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
             <div className="p-6 border-b border-slate-700 bg-slate-800/80 flex flex-col md:flex-row justify-between items-center gap-4">
               <div>
                 <h2 className="text-xl font-bold text-white">Orari Apertura</h2>
-                <p className="text-sm text-slate-400">Configura orari per sport e sede.</p>
+                <p className="text-sm text-slate-400">Configura orari standard e chiusure straordinarie.</p>
               </div>
 
               <div className="flex gap-2">
@@ -882,7 +943,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   onChange={(e) => {
                     const newSportId = e.target.value;
                     setSelectedScheduleSportId(newSportId);
-                    // Automatically select first location of new sport
                     const sport = config.sports.find((s) => s.id === newSportId);
                     if (sport && sport.locations.length > 0) {
                       setSelectedScheduleLocId(sport.locations[0].id);
@@ -990,6 +1050,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     );
                   })}
                 </div>
+
                 <div className="p-6 bg-slate-800/50 border-t border-slate-700 flex justify-end">
                   <Button onClick={handleSaveSchedule}>Salva Orari</Button>
                 </div>
@@ -998,6 +1059,138 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
               <div className="p-10 text-center text-slate-500">Seleziona uno sport e una sede per configurare gli orari.</div>
             )}
           </div>
+
+          {/* ECCEZIONI E CHIUSURE (ripristinate) */}
+          {selectedScheduleSportId && (
+            <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
+              <div className="p-4 bg-slate-800/80 border-b border-slate-700">
+                <h3 className="font-bold text-white">Eccezioni e Chiusure</h3>
+                <p className="text-xs text-slate-400">Pianifica chiusure o orari speciali per giorni specifici.</p>
+              </div>
+
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-4">
+                  <label className="block text-xs font-bold uppercase text-slate-500">Nuova Eccezione</label>
+                  <input
+                    type="date"
+                    className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white"
+                    value={exceptionDate}
+                    onChange={(e) => setExceptionDate(e.target.value)}
+                  />
+
+                  <div className="flex items-center gap-3 p-4 bg-slate-900 rounded-xl border border-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={exceptionData.isOpen}
+                      onChange={(e) => setExceptionData({ ...exceptionData, isOpen: e.target.checked })}
+                      className="w-6 h-6 rounded bg-slate-700 border-slate-600"
+                      id="isOpenCheck"
+                    />
+                    <label
+                      htmlFor="isOpenCheck"
+                      className={`font-bold cursor-pointer text-lg ${exceptionData.isOpen ? 'text-emerald-400' : 'text-red-400'}`}
+                    >
+                      {exceptionData.isOpen ? 'APERTO' : 'CHIUSO'}
+                    </label>
+                  </div>
+
+                  {exceptionData.isOpen && (
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <label className="text-xs text-slate-500 block mb-1">Dalle</label>
+                        <input
+                          type="time"
+                          value={exceptionData.start}
+                          onChange={(e) => setExceptionData({ ...exceptionData, start: e.target.value })}
+                          className="w-full bg-slate-900 border border-slate-600 rounded text-white p-2"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-xs text-slate-500 block mb-1">Alle</label>
+                        <input
+                          type="time"
+                          value={exceptionData.end}
+                          onChange={(e) => setExceptionData({ ...exceptionData, end: e.target.value })}
+                          className="w-full bg-slate-900 border border-slate-600 rounded text-white p-2"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 p-3 bg-indigo-900/10 rounded border border-indigo-500/30">
+                    <input
+                      type="checkbox"
+                      checked={applyToAllLocs}
+                      onChange={(e) => setApplyToAllLocs(e.target.checked)}
+                      className="w-4 h-4 rounded text-indigo-600"
+                      id="allLocsCheck"
+                    />
+                    <label htmlFor="allLocsCheck" className="text-xs text-slate-300 cursor-pointer">
+                      Applica a TUTTE le sedi di questo sport
+                    </label>
+                  </div>
+
+                  <Button onClick={handleSaveException} disabled={!exceptionDate} className="w-full">
+                    Salva Regola
+                  </Button>
+                </div>
+
+                <div className="border-l border-slate-700 pl-8 space-y-3 max-h-96 overflow-y-auto">
+                  <label className="block text-xs font-bold uppercase text-slate-500 sticky top-0 bg-slate-800 py-1 z-10">
+                    Eccezioni Attive (Prossimamente)
+                  </label>
+
+                  {Object.keys(sportWideExceptions).length === 0 ? (
+                    <p className="text-sm text-slate-500 italic">Nessuna eccezione configurata (o quelle vecchie sono state rimosse).</p>
+                  ) : (
+                    Object.entries(sportWideExceptions)
+                      .sort()
+                      .map(([date, locMap]) => {
+                        const sport = config.sports.find((s) => s.id === selectedScheduleSportId);
+                        const totalLocs = sport?.locations.length || 0;
+                        const locIds = Object.keys(locMap);
+                        const affectedLocsCount = locIds.length;
+
+                        const data = locMap[locIds[0]];
+
+                        const isAllLocs = affectedLocsCount === totalLocs;
+                        const affectedLocNames = locIds
+                          .map((id) => sport?.locations.find((l) => l.id === id)?.name)
+                          .filter(Boolean)
+                          .join(', ');
+
+                        return (
+                          <div
+                            key={date}
+                            className={`flex justify-between items-center p-3 rounded border ${
+                              data.isOpen ? 'bg-slate-900 border-slate-700' : 'bg-red-900/20 border-red-500/30'
+                            }`}
+                          >
+                            <div className="flex-1 min-w-0 pr-2">
+                              <div className="font-bold text-white text-sm">
+                                {new Date(date).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })}
+                              </div>
+                              <div className={`text-xs font-medium mb-1 ${data.isOpen ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {data.isOpen ? `Aperto: ${data.start} - ${data.end}` : 'CHIUSO TUTTO IL GIORNO'}
+                              </div>
+                              <div className="text-[10px] text-slate-400 uppercase font-bold truncate">
+                                {isAllLocs ? 'Sedi: TUTTE LE SEDI' : `Sedi: ${affectedLocNames}`}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => handleDeleteException(date, locIds)}
+                              className="text-red-400 hover:text-white text-[10px] px-2 py-1 rounded border border-red-500/20 hover:bg-red-500/20 flex-shrink-0"
+                            >
+                              Elimina
+                            </button>
+                          </div>
+                        );
+                      })
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
