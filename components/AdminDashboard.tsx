@@ -8,7 +8,8 @@ import {
   initGoogleClient,
   syncGoogleEventsToFirebase,
   exportBookingsToGoogle,
-  listGoogleCalendars
+  listGoogleCalendars,
+  initBookingListener
 } from '../services/calendarService';
 import {
   getAppConfig,
@@ -27,8 +28,7 @@ import {
   initConfigListener,
   updateImportBusyCalendars,
   updateLocationException,
-  updateMultipleLocationsExceptions,
-  initBookingListener
+  updateMultipleLocationsExceptions
 } from '../services/configService';
 import { logout } from '../services/authService';
 import Button from './Button';
@@ -182,7 +182,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       }
     });
 
-    const unsubBookings = initBookingListener((newBookings) => {
+    const unsubBookings = initBookingListener((newBookings: Booking[]) => {
       // Mostra solo quelle NON passate e non "EXTERNAL_BUSY" (se presente)
       const now = new Date();
       const filtered = newBookings
