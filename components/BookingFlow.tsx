@@ -32,10 +32,12 @@ const BookingFlow: React.FC = () => {
     level: 'Beginner' as Booking['skillLevel'],
     notes: ''
   });
+  const [athleticRequest, setAthleticRequest] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null);
   const [generatedPlan, setGeneratedPlan] = useState<string>('');
+  const isAthleticPreparationSport = selectedSport?.offerType === 'ATHLETIC_PREPARATION';
 
   // Listen for real-time config updates (e.g. Min Notice changes)
   useEffect(() => {
@@ -86,15 +88,18 @@ const BookingFlow: React.FC = () => {
   };
 
   const handleConfirm = async () => {
-      if (!selectedSport || !selectedSlot || !selectedLocation || !selectedDuration) return;
+      if (!selectedSport) return;
+      if (!isAthleticPreparationSport && (!selectedSlot || !selectedLocation || !selectedDuration)) return;
+      if (isAthleticPreparationSport && !athleticRequest.trim()) return;
 
       setIsSubmitting(true);
 
       const aiPlan = await generateLessonPlan({
           sport: selectedSport.name,
           skillLevel: formData.level,
-          durationMinutes: selectedDuration,
-          lessonType: selectedLessonType?.name
+          durationMinutes: selectedDuration || 60,
+          lessonType: isAthleticPreparationSport ? 'Preparazione atletica' : selectedLessonType?.name,
+          focusArea: isAthleticPreparationSport ? athleticRequest.trim() : undefined
       });
       setGeneratedPlan(aiPlan);
 
@@ -102,19 +107,20 @@ const BookingFlow: React.FC = () => {
           id: Date.now().toString(),
           sportId: selectedSport.id,
           sportName: selectedSport.name,
-          locationId: selectedLocation.id,
-          locationName: selectedLocation.name,
-          lessonTypeId: selectedLessonType?.id,
-          lessonTypeName: selectedLessonType?.name,
-          durationMinutes: selectedDuration,
-          date: selectedDate.toISOString().split('T')[0],
-          timeSlotId: selectedSlot.id,
-          startTime: selectedSlot.startTime,
+          locationId: isAthleticPreparationSport ? 'athletic_preparation' : selectedLocation!.id,
+          locationName: isAthleticPreparationSport ? 'Preparazione atletica' : selectedLocation!.name,
+          lessonTypeId: isAthleticPreparationSport ? 'athletic_preparation' : selectedLessonType?.id,
+          lessonTypeName: isAthleticPreparationSport ? 'Richiesta programma' : selectedLessonType?.name,
+          durationMinutes: isAthleticPreparationSport ? 60 : selectedDuration!,
+          date: isAthleticPreparationSport ? new Date().toISOString().split('T')[0] : selectedDate.toISOString().split('T')[0],
+          timeSlotId: isAthleticPreparationSport ? 'athletic_request' : selectedSlot!.id,
+          startTime: isAthleticPreparationSport ? new Date().toISOString() : selectedSlot!.startTime,
           customerName: formData.name,
           customerEmail: formData.email,
           customerPhone: formData.phone,
           skillLevel: formData.level,
-          notes: formData.notes,
+          notes: isAthleticPreparationSport ? undefined : formData.notes,
+          athleticRequest: isAthleticPreparationSport ? athleticRequest.trim() : undefined,
           aiLessonPlan: aiPlan
       };
 
@@ -216,7 +222,15 @@ END:VCALENDAR`;
                     return (
                         <button 
                             key={sport.id}
-                            onClick={() => { setSelectedSport(sport); setCurrentStep(1); }}
+                            onClick={() => {
+                                setSelectedSport(sport);
+                                setSelectedLocation(null);
+                                setSelectedLessonType(null);
+                                setSelectedDuration(null);
+                                setSelectedSlot(null);
+                                setAthleticRequest('');
+                                setCurrentStep(sport.offerType === 'ATHLETIC_PREPARATION' ? 3 : 1);
+                            }}
                             className={`group p-8 rounded-2xl text-left transition-all duration-300 border hover:shadow-xl ${containerClass}`}
                         >
                             <div className="flex items-center justify-between h-full">
@@ -375,10 +389,14 @@ END:VCALENDAR`;
   if (currentStep === 3) {
       return (
           <div className="space-y-6 animate-in fade-in">
-            <button onClick={() => setCurrentStep(2)} className="text-slate-400 hover:text-white text-sm flex items-center gap-1 mb-2">← Indietro</button>
+            <button onClick={() => setCurrentStep(isAthleticPreparationSport ? 0 : 2)} className="text-slate-400 hover:text-white text-sm flex items-center gap-1 mb-2">
+              ← {isAthleticPreparationSport ? 'Cambia Sport' : 'Indietro'}
+            </button>
             
             <div className="bg-slate-800/50 backdrop-blur rounded-2xl border border-slate-700 p-6 md:p-8 shadow-xl">
-                <h2 className="text-2xl font-bold text-white mb-6">I tuoi Dati</h2>
+                <h2 className="text-2xl font-bold text-white mb-6">
+                  {isAthleticPreparationSport ? 'Richiesta Preparazione Atletica' : 'I tuoi Dati'}
+                </h2>
                 <div className="space-y-5">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                         <input 
@@ -413,22 +431,43 @@ END:VCALENDAR`;
                              ))}
                          </div>
                     </div>
-                    <div>
-                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Note Aggiuntive</label>
-                        <textarea className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white min-h-[100px] focus:border-indigo-500 outline-none mb-2" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} placeholder="Es. Ho bisogno di racchette..." />
-                        
-                        {/* IMPORTANT WARNING MESSAGE */}
-                        <div className="p-4 mt-2 border-2 border-amber-400/30 bg-amber-500/10 rounded-xl text-center">
-                            <p className="font-extrabold text-amber-400 text-sm md:text-base uppercase tracking-wide leading-relaxed">
-                                COMUNICA SU WHATSAPP LA PRENOTAZIONE DELLA LEZIONE, LA LEZIONE VERRA' CONFERMATA DOPO LA VERIFICA DELLA DISPONIBILITA' DEL CAMPO
-                            </p>
-                        </div>
-                    </div>
-                </div>
+                   {isAthleticPreparationSport ? (
+                     <div>
+                       <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                         Richiesta programma di allenamento
+                       </label>
+                       <textarea
+                         className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white min-h-[140px] focus:border-indigo-500 outline-none"
+                         value={athleticRequest}
+                         onChange={e => setAthleticRequest(e.target.value)}
+                         placeholder="Descrivi obiettivi, disponibilità, eventuali infortuni, priorità o focus del programma..."
+                       />
+                     </div>
+                   ) : (
+                     <div>
+                         <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Note Aggiuntive</label>
+                         <textarea className="w-full p-4 bg-slate-900 border border-slate-600 rounded-xl text-white min-h-[100px] focus:border-indigo-500 outline-none mb-2" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} placeholder="Es. Ho bisogno di racchette..." />
+                          
+                         {/* IMPORTANT WARNING MESSAGE */}
+                         <div className="p-4 mt-2 border-2 border-amber-400/30 bg-amber-500/10 rounded-xl text-center">
+                             <p className="font-extrabold text-amber-400 text-sm md:text-base uppercase tracking-wide leading-relaxed">
+                                 COMUNICA SU WHATSAPP LA PRENOTAZIONE DELLA LEZIONE, LA LEZIONE VERRA' CONFERMATA DOPO LA VERIFICA DELLA DISPONIBILITA' DEL CAMPO
+                             </p>
+                         </div>
+                     </div>
+                   )}
+               </div>
             </div>
 
-             <div className="flex justify-center pt-4">
-                <Button disabled={!formData.name || !formData.email || !formData.phone} onClick={handleConfirm} isLoading={isSubmitting} className="w-full md:w-auto md:min-w-[250px] py-4 text-lg">Conferma Prenotazione</Button>
+            <div className="flex justify-center pt-4">
+               <Button
+                 disabled={!formData.name || !formData.email || !formData.phone || (isAthleticPreparationSport && !athleticRequest.trim())}
+                 onClick={handleConfirm}
+                 isLoading={isSubmitting}
+                 className="w-full md:w-auto md:min-w-[250px] py-4 text-lg"
+               >
+                 {isAthleticPreparationSport ? 'Invia Richiesta Programma' : 'Conferma Prenotazione'}
+               </Button>
             </div>
           </div>
       );
@@ -441,29 +480,43 @@ END:VCALENDAR`;
               <div className="w-24 h-24 bg-emerald-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-emerald-500/30">✓</div>
               <h2 className="text-4xl font-bold text-white mb-2">Richiesta Inviata!</h2>
               <div className="bg-slate-800/80 backdrop-blur rounded-2xl border border-slate-700 p-8 max-w-2xl mx-auto text-left shadow-2xl mt-8 relative overflow-hidden">
-                  <div className="font-bold text-white text-lg mb-4">{new Date(confirmedBooking.date).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long'})} alle {new Date(confirmedBooking.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                  <div className="font-bold text-white text-lg mb-4">
+                    {confirmedBooking.athleticRequest
+                      ? 'La tua richiesta di preparazione atletica è stata registrata.'
+                      : `${new Date(confirmedBooking.date).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long'})} alle ${new Date(confirmedBooking.startTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`}
+                  </div>
                   <div className="text-slate-300 mb-6">
                       {confirmedBooking.sportName} - {confirmedBooking.locationName}<br/>
-                      {confirmedBooking.lessonTypeName} ({confirmedBooking.durationMinutes} min)
+                      {confirmedBooking.athleticRequest
+                        ? confirmedBooking.lessonTypeName
+                        : `${confirmedBooking.lessonTypeName} (${confirmedBooking.durationMinutes} min)`}
                   </div>
+                  {confirmedBooking.athleticRequest && (
+                    <div className="mb-6 p-4 rounded-xl border border-slate-700 bg-slate-900/60 text-sm text-slate-300">
+                      <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Richiesta inviata</div>
+                      {confirmedBooking.athleticRequest}
+                    </div>
+                  )}
                   
                   {/* Calendar Buttons */}
-                  <div className="flex flex-col sm:flex-row gap-3 mb-6">
-                      <button 
-                        onClick={addToGoogleCalendar}
-                        className="flex-1 py-2 px-4 rounded-xl border border-slate-600 bg-slate-700 hover:bg-slate-600 text-white font-medium flex items-center justify-center gap-2 transition-colors"
-                      >
-                         <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 2C16.92 2 20.5 5.58 20.5 10C20.5 14.42 16.92 18 12.5 18C8.08 18 4.5 14.42 4.5 10C4.5 5.58 8.08 2 12.5 2M12.5 20C16.64 20 20 23.36 20 27.5C20 31.64 16.64 35 12.5 35C8.36 35 5 31.64 5 27.5C5 23.36 8.36 20 12.5 20M12.5 22C9.46 22 7 24.46 7 27.5C7 30.54 9.46 33 12.5 33C15.54 33 18 30.54 18 27.5C18 24.46 15.54 22 12.5 22Z" transform="scale(0.5)"/><path d="M19 4H18V2H16V4H8V2H6V4H5C3.89 4 3 4.9 3 6V20C3 21.1 3.89 22 5 22H19C20.1 22 21 21.1 21 20V6C21 4.9 20.1 4 19 4ZM19 20H5V10H19V20ZM19 8H5V6H19V8Z"/></svg>
-                         Aggiungi a Google Calendar
-                      </button>
-                      <button 
-                        onClick={downloadIcsFile}
-                        className="flex-1 py-2 px-4 rounded-xl border border-slate-600 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-medium flex items-center justify-center gap-2 transition-colors"
-                      >
-                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                         Scarica iCal / Outlook
-                      </button>
-                  </div>
+                  {!confirmedBooking.athleticRequest && (
+                    <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                        <button 
+                          onClick={addToGoogleCalendar}
+                          className="flex-1 py-2 px-4 rounded-xl border border-slate-600 bg-slate-700 hover:bg-slate-600 text-white font-medium flex items-center justify-center gap-2 transition-colors"
+                        >
+                           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 2C16.92 2 20.5 5.58 20.5 10C20.5 14.42 16.92 18 12.5 18C8.08 18 4.5 14.42 4.5 10C4.5 5.58 8.08 2 12.5 2M12.5 20C16.64 20 20 23.36 20 27.5C20 31.64 16.64 35 12.5 35C8.36 35 5 31.64 5 27.5C5 23.36 8.36 20 12.5 20M12.5 22C9.46 22 7 24.46 7 27.5C7 30.54 9.46 33 12.5 33C15.54 33 18 30.54 18 27.5C18 24.46 15.54 22 12.5 22Z" transform="scale(0.5)"/><path d="M19 4H18V2H16V4H8V2H6V4H5C3.89 4 3 4.9 3 6V20C3 21.1 3.89 22 5 22H19C20.1 22 21 21.1 21 20V6C21 4.9 20.1 4 19 4ZM19 20H5V10H19V20ZM19 8H5V6H19V8Z"/></svg>
+                           Aggiungi a Google Calendar
+                        </button>
+                        <button 
+                          onClick={downloadIcsFile}
+                          className="flex-1 py-2 px-4 rounded-xl border border-slate-600 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-medium flex items-center justify-center gap-2 transition-colors"
+                        >
+                           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                           Scarica iCal / Outlook
+                        </button>
+                    </div>
+                  )}
 
                   {generatedPlan && (
                     <div className="prose prose-invert prose-sm max-w-none bg-slate-900/50 p-6 rounded-xl border border-slate-700/50">

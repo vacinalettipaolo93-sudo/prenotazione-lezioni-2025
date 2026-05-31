@@ -45,11 +45,14 @@ export interface LessonType {
   price?: number;
 }
 
+export type SportOfferType = 'LESSON' | 'ATHLETIC_PREPARATION';
+
 export interface Sport {
   id: string;
   name: string;
   emoji: string; // Icona visiva
   description: string;
+  offerType: SportOfferType;
   // Nested Configuration
   locations: SportLocation[];
   lessonTypes: LessonType[];
@@ -98,6 +101,7 @@ export interface Booking {
   customerPhone?: string; // Nuovo campo telefono
   skillLevel: 'Beginner' | 'Intermediate' | 'Advanced';
   notes?: string;
+  athleticRequest?: string;
   
   aiLessonPlan?: string;
   targetCalendarId?: string; // ID del calendario dove è stata salvata la prenotazione

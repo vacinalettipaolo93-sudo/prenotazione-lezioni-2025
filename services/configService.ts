@@ -2,6 +2,7 @@ import {
   AppConfig,
   Sport,
   SportLocation,
+  SportOfferType,
   WeeklySchedule,
   DailySchedule
 } from '../types';
@@ -37,6 +38,7 @@ const DEFAULT_CONFIG: AppConfig = {
       name: 'Tennis',
       emoji: '🎾',
       description: 'Migliora il tuo dritto e rovescio.',
+      offerType: 'LESSON',
       locations: [
         {
           id: 'loc_t1',
@@ -59,6 +61,7 @@ const DEFAULT_CONFIG: AppConfig = {
       name: 'Padel',
       emoji: '🏸',
       description: 'Vetri, griglie e bandeja.',
+      offerType: 'LESSON',
       locations: [
         {
           id: 'loc_p1',
@@ -95,10 +98,13 @@ const normalizeConfig = (data: any): AppConfig => {
 
   merged.sports = merged.sports.map((s: any) => {
     const sport: any = { ...s };
+    if (sport.offerType !== 'ATHLETIC_PREPARATION') sport.offerType = 'LESSON';
 
     if (!Array.isArray(sport.locations)) sport.locations = [];
-    if (!Array.isArray(sport.lessonTypes)) sport.lessonTypes = [];
-    if (!Array.isArray(sport.durations)) sport.durations = [60];
+    if (!Array.isArray(sport.lessonTypes)) {
+      sport.lessonTypes = sport.offerType === 'ATHLETIC_PREPARATION' ? [] : [{ id: 'def_1', name: 'Lezione Standard' }];
+    }
+    if (!Array.isArray(sport.durations)) sport.durations = sport.offerType === 'ATHLETIC_PREPARATION' ? [] : [60];
 
     sport.locations = sport.locations.map((l: any) => {
       const loc: any = { ...l };
@@ -268,16 +274,18 @@ export const updateImportBusyCalendars = (calendarIds: string[]) => {
 
 // --- SPORT MANAGEMENT ---
 
-export const addSport = (name: string) => {
+export const addSport = (name: string, offerType: SportOfferType = 'LESSON') => {
   const config = getAppConfig();
+  const isAthleticPreparation = offerType === 'ATHLETIC_PREPARATION';
   config.sports.push({
     id: Date.now().toString(),
     name,
     emoji: '🎾',
-    description: 'Nuova attività',
+    description: isAthleticPreparation ? 'Richiesta programma di preparazione atletica.' : 'Nuova attività',
+    offerType,
     locations: [],
-    lessonTypes: [{ id: 'def_1', name: 'Lezione Standard' }],
-    durations: [60]
+    lessonTypes: isAthleticPreparation ? [] : [{ id: 'def_1', name: 'Lezione Standard' }],
+    durations: isAthleticPreparation ? [] : [60]
   });
   saveAppConfig(config);
 };
