@@ -112,12 +112,16 @@ export const getAllCalendarEvents = (): CalendarEvent[] => {
 
 export const saveBooking = async (booking: Booking): Promise<void> => {
   try {
-      const { id, ...bookingData } = booking; 
+      const { id, ...bookingDataRaw } = booking;
+      const bookingData = Object.fromEntries(
+          Object.entries(bookingDataRaw).filter(([, value]) => value !== undefined)
+      );
       await addDoc(collection(db, BOOKING_COLLECTION), bookingData);
       console.log(`[Firebase] Booking saved for: ${booking.customerName}`);
   } catch (e) {
       console.error("Errore salvataggio prenotazione:", e);
       alert("Errore di rete. Riprova.");
+      throw e;
   }
 };
 
