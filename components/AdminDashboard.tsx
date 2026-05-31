@@ -59,6 +59,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [newSportName, setNewSportName] = useState('');
   const [newSportEmoji, setNewSportEmoji] = useState('🏅');
   const [newSportDescription, setNewSportDescription] = useState('');
+  const [newSportOfferType, setNewSportOfferType] = useState<Sport['offerType']>('LESSON');
 
   const [newLocName, setNewLocName] = useState('');
   const [newLocAddr, setNewLocAddr] = useState('');
@@ -187,7 +188,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       const now = new Date();
       const filtered = newBookings
         .filter((b) => (b as any).sportName !== 'EXTERNAL_BUSY')
-        .filter((b) => new Date(b.startTime) >= now)
+        .filter((b) => Boolean(b.athleticRequest) || new Date(b.startTime) >= now)
         .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 
       setRawBookings(filtered);
@@ -211,18 +212,26 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   }, [isConnected]);
 
   useEffect(() => {
-    if (config.sports.length > 0 && !selectedScheduleSportId) {
-      const firstSport = config.sports[0];
+    const schedulableSports = config.sports.filter((sport) => sport.offerType !== 'ATHLETIC_PREPARATION');
+    if (schedulableSports.length > 0 && !selectedScheduleSportId) {
+      const firstSport = schedulableSports[0];
       setSelectedScheduleSportId(firstSport.id);
       if (firstSport.locations.length > 0) {
         setSelectedScheduleLocId(firstSport.locations[0].id);
       }
+    } else if (schedulableSports.length === 0) {
+      setSelectedScheduleSportId('');
+      setSelectedScheduleLocId('');
     }
   }, [config.sports, selectedScheduleSportId]);
 
   useEffect(() => {
     if (selectedScheduleSportId && selectedScheduleLocId) {
       const sport = config.sports.find((s) => s.id === selectedScheduleSportId);
+      if (!sport || sport.offerType === 'ATHLETIC_PREPARATION') {
+        setEditingSchedule(null);
+        return;
+      }
       const loc = sport?.locations.find((l) => l.id === selectedScheduleLocId);
       if (loc) {
         setEditingSchedule(loc.schedule);
@@ -256,6 +265,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     });
     return aggregated;
   }, [selectedScheduleSportId, config.sports]);
+
+  const schedulableSports = useMemo(
+    () => config.sports.filter((sport) => sport.offerType !== 'ATHLETIC_PREPARATION'),
+    [config.sports]
+  );
 
   const handleConnectCalendar = async () => {
     setIsConnecting(true);
@@ -325,7 +339,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     if (!newSportName.trim()) return;
 
     const beforeIds = new Set(config.sports.map((s) => s.id));
-    addSport(newSportName.trim());
+    addSport(newSportName.trim(), newSportOfferType);
 
     setTimeout(() => {
       const after = getAppConfig();
@@ -335,7 +349,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       if (created) {
         updateSport(created.id, {
           emoji: (newSportEmoji || '🏅').trim(),
-          description: newSportDescription.trim()
+          description: newSportDescription.trim(),
+          offerType: newSportOfferType
         });
       }
     }, 0);
@@ -343,6 +358,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     setNewSportName('');
     setNewSportEmoji('🏅');
     setNewSportDescription('');
+    setNewSportOfferType('LESSON');
   };
 
   const startEditSport = (sport: Sport) => {
@@ -357,11 +373,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
   const saveEditSport = () => {
     if (editingSportId && tempSport.name) {
+      const offerType = tempSport.offerType === 'ATHLETIC_PREPARATION' ? 'ATHLETIC_PREPARATION' : 'LESSON';
       updateSport(editingSportId, {
         ...tempSport,
         name: tempSport.name.trim(),
         emoji: (tempSport.emoji || '🏅').trim(),
-        description: (tempSport.description || '').trim()
+        description: (tempSport.description || '').trim(),
+        offerType,
+        locations: offerType === 'ATHLETIC_PREPARATION' ? [] : tempSport.locations,
+        lessonTypes: offerType === 'ATHLETIC_PREPARATION' ? [] : tempSport.lessonTypes,
+        durations: offerType === 'ATHLETIC_PREPARATION' ? [] : tempSport.durations
       });
       setEditingSportId(null);
     }
@@ -736,9 +757,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       {booking.customerPhone ? ` • ${booking.customerPhone}` : ''} • {booking.customerEmail}
                     </div>
 
-                    {booking.notes && (
+                    {(booking.athleticRequest || booking.notes) && (
                       <div className="text-xs text-slate-500 mt-2">
-                        Note: <span className="text-slate-400">{booking.notes}</span>
+                        {booking.athleticRequest ? 'Richiesta preparazione:' : 'Note:'}{' '}
+                        <span className="text-slate-400">{booking.athleticRequest || booking.notes}</span>
                       </div>
                     )}
                   </div>
@@ -747,9 +769,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     <span className="text-xs bg-slate-900 px-2 py-1 rounded text-slate-400 border border-slate-700 w-full text-center">
                       {booking.lessonTypeName || 'Tipo lezione'}
                     </span>
-                    <span className="text-xs bg-slate-900 px-2 py-1 rounded text-slate-400 border border-slate-700 w-full text-center">
-                      {booking.durationMinutes} min
-                    </span>
+                    {!booking.athleticRequest && (
+                      <span className="text-xs bg-slate-900 px-2 py-1 rounded text-slate-400 border border-slate-700 w-full text-center">
+                        {booking.durationMinutes} min
+                      </span>
+                    )}
                   </div>
                 </div>
               ))}
@@ -810,11 +834,29 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                           value={tempSport.description || ''}
                           onChange={(e) => setTempSport({ ...tempSport, description: e.target.value })}
                         />
+                        <select
+                          className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs"
+                          value={tempSport.offerType || 'LESSON'}
+                          onChange={(e) =>
+                            setTempSport({
+                              ...tempSport,
+                              offerType: e.target.value as Sport['offerType']
+                            })
+                          }
+                        >
+                          <option value="LESSON">Lezione standard</option>
+                          <option value="ATHLETIC_PREPARATION">Preparazione atletica</option>
+                        </select>
                       </div>
                     ) : (
                       <>
                         <div className="text-2xl">{sport.emoji}</div>
-                        <h4 className="text-lg font-bold text-white">{sport.name}</h4>
+                        <div>
+                          <h4 className="text-lg font-bold text-white">{sport.name}</h4>
+                          {sport.offerType === 'ATHLETIC_PREPARATION' && (
+                            <div className="text-[10px] uppercase tracking-wide text-emerald-300">Preparazione atletica</div>
+                          )}
+                        </div>
                       </>
                     )}
                   </div>
@@ -867,7 +909,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                 </div>
 
                 {expandedSportId === sport.id && (
-                  <div className="p-6 bg-slate-900/50 border-t border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div
+                    className={`p-6 bg-slate-900/50 border-t border-slate-700 ${
+                      sport.offerType === 'ATHLETIC_PREPARATION' ? 'space-y-3' : 'grid grid-cols-1 md:grid-cols-3 gap-6'
+                    }`}
+                  >
+                    {sport.offerType === 'ATHLETIC_PREPARATION' ? (
+                      <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-4 text-sm text-slate-300">
+                        Modalità <strong className="text-white">Preparazione atletica</strong> attiva: non sono richieste sedi, tipologie lezione o durate.
+                      </div>
+                    ) : (
+                      <>
                     <div className="space-y-3">
                       <h5 className="text-sm font-bold text-indigo-400 uppercase tracking-wider">Sedi & Calendari</h5>
 
@@ -1028,6 +1080,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         </button>
                       </div>
                     </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -1035,7 +1089,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
             <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4 max-w-2xl">
               <div className="text-sm font-bold text-white mb-2">Aggiungi nuovo sport</div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                 <input
                   className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white"
                   placeholder="Nome (es. Padel)"
@@ -1054,12 +1108,20 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   value={newSportDescription}
                   onChange={(e) => setNewSportDescription(e.target.value)}
                 />
+                <select
+                  className="p-2 bg-slate-900 border border-slate-600 rounded-lg text-white"
+                  value={newSportOfferType}
+                  onChange={(e) => setNewSportOfferType(e.target.value as Sport['offerType'])}
+                >
+                  <option value="LESSON">Lezione standard</option>
+                  <option value="ATHLETIC_PREPARATION">Preparazione atletica</option>
+                </select>
               </div>
               <div className="mt-3">
                 <Button onClick={handleAddSport}>Aggiungi Sport</Button>
               </div>
               <div className="text-[11px] text-slate-400 mt-2">
-                Nota: la creazione usa <code>addSport(name)</code> e poi aggiorna emoji/descrizione automaticamente.
+                Nota: la creazione usa <code>addSport(name, offerType)</code> e poi aggiorna emoji/descrizione automaticamente.
               </div>
             </div>
           </div>
@@ -1083,7 +1145,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   onChange={(e) => {
                     const newSportId = e.target.value;
                     setSelectedScheduleSportId(newSportId);
-                    const sport = config.sports.find((s) => s.id === newSportId);
+                    const sport = schedulableSports.find((s) => s.id === newSportId);
                     if (sport && sport.locations.length > 0) {
                       setSelectedScheduleLocId(sport.locations[0].id);
                     } else {
@@ -1094,7 +1156,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   <option value="" disabled>
                     Seleziona Sport
                   </option>
-                  {config.sports.map((s) => (
+                  {schedulableSports.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                     </option>
@@ -1109,7 +1171,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                   <option value="" disabled>
                     Seleziona Sede
                   </option>
-                  {config.sports
+                  {schedulableSports
                     .find((s) => s.id === selectedScheduleSportId)
                     ?.locations.map((l) => (
                       <option key={l.id} value={l.id}>
@@ -1120,7 +1182,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
               </div>
             </div>
 
-            {editingSchedule ? (
+            {schedulableSports.length === 0 ? (
+              <div className="p-10 text-center text-slate-500">
+                Nessuno sport con lezioni standard configurato. Gli sport in modalità preparazione atletica non richiedono orari/sedi.
+              </div>
+            ) : editingSchedule ? (
               <>
                 <div className="p-6 bg-slate-800/30 border-b border-slate-700 flex justify-between items-center">
                   <span className="text-sm text-slate-300 font-medium">Intervallo Slot</span>
@@ -1200,7 +1266,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
             )}
           </div>
 
-          {selectedScheduleSportId && (
+          {selectedScheduleSportId && schedulableSports.length > 0 && (
             <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
               <div className="p-4 bg-slate-800/80 border-b border-slate-700">
                 <h3 className="font-bold text-white">Eccezioni e Chiusure</h3>

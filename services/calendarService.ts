@@ -518,6 +518,7 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
     const unsyncedBookings = cachedBookings.filter(b => 
         !b.googleEventId && 
         b.sportName !== 'EXTERNAL_BUSY' && 
+        !b.athleticRequest &&
         new Date(b.startTime) > new Date()
     );
 
