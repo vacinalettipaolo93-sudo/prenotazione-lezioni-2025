@@ -6,6 +6,8 @@ import { getAppConfig, initConfigListener } from '../services/configService';
 import { generateLessonPlan, suggestAvailabilitySummary } from '../services/geminiService';
 import Button from './Button';
 
+const OWNER_WHATSAPP_NUMBER = '393428009404';
+
 const BookingFlow: React.FC = () => {
   // Use State for config to trigger re-renders when it updates
   const [config, setConfig] = useState<AppConfig>(getAppConfig()); 
@@ -176,6 +178,19 @@ END:VCALENDAR`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+  };
+
+  const getAthleticPreparationWhatsappUrl = (booking: Booking) => {
+      const messageLines = [
+          'Ciao, ti ho inviato una richiesta di preparazione atletica.',
+          `Nome: ${booking.customerName}`,
+          `Sport: ${booking.sportName}`,
+          booking.athleticRequest ? `Richiesta: ${booking.athleticRequest}` : ''
+      ].filter(Boolean);
+
+      const url = new URL(`https://wa.me/${OWNER_WHATSAPP_NUMBER}`);
+      url.searchParams.set('text', messageLines.join('\n'));
+      return url.toString();
   };
 
   const levelLabels: Record<string, string> = {
@@ -497,7 +512,20 @@ END:VCALENDAR`;
                       {confirmedBooking.athleticRequest}
                     </div>
                   )}
-                  
+                  {confirmedBooking.athleticRequest && (
+                    <a
+                      href={getAthleticPreparationWhatsappUrl(confirmedBooking)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mb-6 w-full py-3 px-4 rounded-xl border border-emerald-400/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-200 hover:text-emerald-100 font-semibold flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M20.52 3.48A11.82 11.82 0 0012.1.02C5.58.02.3 5.3.3 11.82c0 2.08.54 4.11 1.57 5.9L.02 24l6.47-1.7a11.77 11.77 0 005.61 1.43h.01c6.52 0 11.8-5.28 11.8-11.8 0-3.15-1.23-6.1-3.39-8.45ZM12.11 21.7h-.01a9.8 9.8 0 01-4.99-1.37l-.36-.21-3.84 1.01 1.03-3.74-.24-.38a9.78 9.78 0 01-1.5-5.19c0-5.4 4.4-9.8 9.81-9.8 2.61 0 5.06 1.02 6.91 2.87a9.7 9.7 0 012.87 6.9c0 5.41-4.4 9.81-9.8 9.81Zm5.37-7.35c-.29-.15-1.73-.85-2-0.95-.27-.1-.47-.15-.66.15-.2.29-.76.95-.93 1.14-.17.2-.34.22-.63.08-.29-.14-1.24-.46-2.35-1.46a8.86 8.86 0 01-1.63-2.03c-.17-.29-.02-.45.13-.6.13-.13.29-.34.44-.51.15-.17.2-.29.29-.49.1-.19.05-.36-.02-.51-.07-.14-.66-1.6-.9-2.2-.24-.58-.49-.5-.66-.5h-.56c-.2 0-.51.08-.78.36-.27.29-1.03 1-1.03 2.44 0 1.43 1.06 2.82 1.2 3.02.15.2 2.07 3.15 5.02 4.41.7.3 1.25.48 1.68.61.7.22 1.34.19 1.84.12.56-.08 1.73-.71 1.97-1.4.24-.68.24-1.26.17-1.39-.07-.12-.27-.2-.56-.34Z" />
+                      </svg>
+                      Apri WhatsApp
+                    </a>
+                  )}
+                   
                   {/* Calendar Buttons */}
                   {!confirmedBooking.athleticRequest && (
                     <div className="flex flex-col sm:flex-row gap-3 mb-6">
