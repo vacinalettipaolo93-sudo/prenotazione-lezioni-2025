@@ -110,14 +110,20 @@ export const getAllCalendarEvents = (): CalendarEvent[] => {
   })).sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
 };
 
+const removeUndefinedBookingFields = (data: Omit<Booking, 'id'>): Record<string, unknown> =>
+  Object.fromEntries(
+    Object.entries(data).filter(([, value]) => value !== undefined)
+  );
+
 export const saveBooking = async (booking: Booking): Promise<void> => {
   try {
-      const { id, ...bookingData } = booking; 
+      const { id, ...bookingDataRaw } = booking;
+      const bookingData = removeUndefinedBookingFields(bookingDataRaw);
       await addDoc(collection(db, BOOKING_COLLECTION), bookingData);
       console.log(`[Firebase] Booking saved for: ${booking.customerName}`);
   } catch (e) {
       console.error("Errore salvataggio prenotazione:", e);
-      alert("Errore di rete. Riprova.");
+      throw e;
   }
 };
 

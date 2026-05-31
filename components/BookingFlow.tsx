@@ -95,41 +95,46 @@ const BookingFlow: React.FC = () => {
       if (isAthleticPreparationSport && !athleticRequest.trim()) return;
 
       setIsSubmitting(true);
+      try {
+          const aiPlan = await generateLessonPlan({
+              sport: selectedSport.name,
+              skillLevel: formData.level,
+              durationMinutes: selectedDuration || 60,
+              lessonType: isAthleticPreparationSport ? 'Preparazione atletica' : selectedLessonType?.name,
+              focusArea: isAthleticPreparationSport ? athleticRequest.trim() : undefined
+          });
+          setGeneratedPlan(aiPlan);
 
-      const aiPlan = await generateLessonPlan({
-          sport: selectedSport.name,
-          skillLevel: formData.level,
-          durationMinutes: selectedDuration || 60,
-          lessonType: isAthleticPreparationSport ? 'Preparazione atletica' : selectedLessonType?.name,
-          focusArea: isAthleticPreparationSport ? athleticRequest.trim() : undefined
-      });
-      setGeneratedPlan(aiPlan);
+          const newBooking: Booking = {
+              id: Date.now().toString(),
+              sportId: selectedSport.id,
+              sportName: selectedSport.name,
+              locationId: isAthleticPreparationSport ? 'athletic_preparation' : selectedLocation!.id,
+              locationName: isAthleticPreparationSport ? 'Preparazione atletica' : selectedLocation!.name,
+              lessonTypeId: isAthleticPreparationSport ? 'athletic_preparation' : selectedLessonType?.id,
+              lessonTypeName: isAthleticPreparationSport ? 'Richiesta programma' : selectedLessonType?.name,
+              durationMinutes: isAthleticPreparationSport ? 60 : selectedDuration!,
+              date: isAthleticPreparationSport ? new Date().toISOString().split('T')[0] : selectedDate.toISOString().split('T')[0],
+              timeSlotId: isAthleticPreparationSport ? 'athletic_request' : selectedSlot!.id,
+              startTime: isAthleticPreparationSport ? new Date().toISOString() : selectedSlot!.startTime,
+              customerName: formData.name,
+              customerEmail: formData.email,
+              customerPhone: formData.phone,
+              skillLevel: formData.level,
+              notes: isAthleticPreparationSport ? undefined : formData.notes,
+              athleticRequest: isAthleticPreparationSport ? athleticRequest.trim() : undefined,
+              aiLessonPlan: aiPlan
+          };
 
-      const newBooking: Booking = {
-          id: Date.now().toString(),
-          sportId: selectedSport.id,
-          sportName: selectedSport.name,
-          locationId: isAthleticPreparationSport ? 'athletic_preparation' : selectedLocation!.id,
-          locationName: isAthleticPreparationSport ? 'Preparazione atletica' : selectedLocation!.name,
-          lessonTypeId: isAthleticPreparationSport ? 'athletic_preparation' : selectedLessonType?.id,
-          lessonTypeName: isAthleticPreparationSport ? 'Richiesta programma' : selectedLessonType?.name,
-          durationMinutes: isAthleticPreparationSport ? 60 : selectedDuration!,
-          date: isAthleticPreparationSport ? new Date().toISOString().split('T')[0] : selectedDate.toISOString().split('T')[0],
-          timeSlotId: isAthleticPreparationSport ? 'athletic_request' : selectedSlot!.id,
-          startTime: isAthleticPreparationSport ? new Date().toISOString() : selectedSlot!.startTime,
-          customerName: formData.name,
-          customerEmail: formData.email,
-          customerPhone: formData.phone,
-          skillLevel: formData.level,
-          notes: isAthleticPreparationSport ? undefined : formData.notes,
-          athleticRequest: isAthleticPreparationSport ? athleticRequest.trim() : undefined,
-          aiLessonPlan: aiPlan
-      };
-
-      saveBooking(newBooking);
-      setConfirmedBooking(newBooking);
-      setIsSubmitting(false);
-      setCurrentStep(4); // Success Step
+          await saveBooking(newBooking);
+          setConfirmedBooking(newBooking);
+          setCurrentStep(4); // Success Step
+      } catch (error) {
+          console.error('Errore durante la conferma della prenotazione:', error);
+          alert('Si è verificato un errore. Riprova.');
+      } finally {
+          setIsSubmitting(false);
+      }
   };
 
   // --- CALENDAR EXPORT HELPERS ---
