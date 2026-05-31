@@ -131,6 +131,7 @@ const BookingFlow: React.FC = () => {
           setCurrentStep(4); // Success Step
       } catch (error) {
           console.error('Errore durante la conferma della prenotazione:', error);
+          alert('Si è verificato un errore. Riprova.');
       } finally {
           setIsSubmitting(false);
       }
