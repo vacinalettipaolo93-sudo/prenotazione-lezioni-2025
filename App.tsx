@@ -56,7 +56,12 @@ const App: React.FC = () => {
   if (!isReady) {
       return (
           <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-              <div className="text-center">
+              <div className="text-center px-6">
+                  <img
+                    src="/logo.png"
+                    alt="Logo Gestionale Prenotazioni"
+                    className="w-20 h-20 mx-auto mb-6 rounded-[1.75rem] object-contain shadow-lg shadow-indigo-500/20"
+                  />
                   <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
                   <p className="text-slate-400 animate-pulse">Connessione al cloud in corso...</p>
                   <p className="text-xs text-slate-600 mt-2 max-w-xs mx-auto">Assicurati di aver inserito le chiavi Firebase in services/firebase.ts</p>
