@@ -3,7 +3,12 @@ const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL))
+      .catch((error) => {
+        console.error('Service worker install failed to cache app shell resources:', APP_SHELL, error);
+      })
   );
   self.skipWaiting();
 });
@@ -22,7 +27,14 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  const requestUrl = new URL(event.request.url);
+  let requestUrl;
+  try {
+    requestUrl = new URL(event.request.url);
+  } catch (error) {
+    console.warn(`Service worker received malformed request URL: ${event.request.url}`, error);
+    return;
+  }
+
   if (requestUrl.origin !== self.location.origin) {
     return;
   }
@@ -30,13 +42,33 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, copy).catch((error) => {
+              console.warn(`Service worker cache write failed for ${event.request.url}:`, error);
+            });
+          });
+        }
         return response;
       })
       .catch((error) => {
-        console.warn('Service worker fetch failed, using cache fallback:', error);
-        return caches.match(event.request).then((cached) => cached || caches.match('/index.html'));
+        console.warn(`Service worker fetch failed for ${event.request.url}, using cache fallback:`, error);
+        return caches.match(event.request).then((cached) => {
+          if (cached) {
+            return cached;
+          }
+
+          const acceptsHtml =
+            event.request.mode === 'navigate' ||
+            event.request.headers.get('accept')?.includes('text/html');
+
+          if (acceptsHtml) {
+            return caches.match('/index.html');
+          }
+
+          return Response.error();
+        });
       })
   );
 });
