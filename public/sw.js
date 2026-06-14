@@ -1,5 +1,16 @@
 const CACHE_NAME = 'prenotazione-lezioni-v1';
-const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest'];
+const APP_SHELL = [
+  '/',
+  '/index.html',
+  '/logo.png',
+  '/manifest.webmanifest',
+  '/icons/apple-touch-icon.png',
+  '/icons/favicon-32.png',
+  '/icons/icon-192.png',
+  '/icons/icon-192-maskable.png',
+  '/icons/icon-512.png',
+  '/icons/icon-512-maskable.png',
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

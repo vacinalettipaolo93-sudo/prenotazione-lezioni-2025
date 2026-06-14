@@ -56,7 +56,12 @@ const App: React.FC = () => {
   if (!isReady) {
       return (
           <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-              <div className="text-center">
+              <div className="text-center px-6">
+                  <img
+                    src="/logo.png"
+                    alt="Logo Gestionale Prenotazioni"
+                    className="w-20 h-20 mx-auto mb-6 rounded-[1.75rem] object-contain shadow-lg shadow-indigo-500/20"
+                  />
                   <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
                   <p className="text-slate-400 animate-pulse">Connessione al cloud in corso...</p>
                   <p className="text-xs text-slate-600 mt-2 max-w-xs mx-auto">Assicurati di aver inserito le chiavi Firebase in services/firebase.ts</p>
@@ -80,7 +85,11 @@ const App: React.FC = () => {
           <div className="flex justify-between h-20">
             <div className="flex items-center cursor-pointer group" onClick={() => setView('booking')}>
               <div className="flex-shrink-0 flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 transition-all">G</div>
+                <img
+                  src="/logo.png"
+                  alt="Logo Gestionale Prenotazioni"
+                  className="w-10 h-10 sm:w-11 sm:h-11 rounded-[1.4rem] object-contain shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 group-hover:scale-[1.03] transition-all"
+                />
                 <span className="font-bold text-xl text-white tracking-tight group-hover:text-indigo-200 transition-colors">Gestionale Prenotazioni</span>
               </div>
             </div>
