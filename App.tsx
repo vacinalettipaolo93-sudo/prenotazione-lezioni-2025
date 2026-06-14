@@ -58,7 +58,7 @@ const App: React.FC = () => {
           <div className="min-h-screen bg-slate-950 flex items-center justify-center">
               <div className="text-center px-6">
                   <img
-                    src="/logo.png"
+                    src="/logo.png?v=2"
                     alt="Logo Gestionale Prenotazioni"
                     className="w-20 h-20 mx-auto mb-6 rounded-[1.75rem] object-contain shadow-lg shadow-indigo-500/20"
                   />
@@ -86,7 +86,7 @@ const App: React.FC = () => {
             <div className="flex items-center cursor-pointer group" onClick={() => setView('booking')}>
               <div className="flex-shrink-0 flex items-center gap-3">
                 <img
-                  src="/logo.png"
+                  src="/logo.png?v=2"
                   alt="Logo Gestionale Prenotazioni"
                   className="w-10 h-10 sm:w-11 sm:h-11 rounded-[1.4rem] object-contain shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 group-hover:scale-[1.03] transition-all"
                 />
