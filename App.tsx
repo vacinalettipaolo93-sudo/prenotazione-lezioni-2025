@@ -80,7 +80,11 @@ const App: React.FC = () => {
           <div className="flex justify-between h-20">
             <div className="flex items-center cursor-pointer group" onClick={() => setView('booking')}>
               <div className="flex-shrink-0 flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 transition-all">G</div>
+                <img
+                  src="/logo.png"
+                  alt="Logo Gestionale Prenotazioni"
+                  className="w-10 h-10 sm:w-11 sm:h-11 rounded-[1.4rem] object-contain shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 group-hover:scale-[1.03] transition-all"
+                />
                 <span className="font-bold text-xl text-white tracking-tight group-hover:text-indigo-200 transition-colors">Gestionale Prenotazioni</span>
               </div>
             </div>
