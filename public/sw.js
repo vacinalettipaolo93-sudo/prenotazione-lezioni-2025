@@ -34,6 +34,9 @@ self.addEventListener('fetch', (event) => {
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/index.html')))
+      .catch((error) => {
+        console.warn('Service worker fetch failed, using cache fallback:', error);
+        return caches.match(event.request).then((cached) => cached || caches.match('/index.html'));
+      })
   );
 });

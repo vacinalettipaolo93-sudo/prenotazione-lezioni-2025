@@ -19,7 +19,7 @@ View your app in AI Studio: https://ai.studio/apps/drive/1JU1zwYocTLmgVsm3sNQpFR
 3. Run the app:
    `npm run dev`
 
-## Installazione PWA
+## PWA Installation
 
-- **Android (Chrome):** apri il menu del browser e seleziona **Installa app** / **Aggiungi a schermata Home**.
-- **iPhone/iPad (Safari):** tocca **Condividi** e poi **Aggiungi alla schermata Home**.
+- **Android (Chrome):** open the browser menu and choose **Install app** / **Add to Home screen**.
+- **iPhone/iPad (Safari):** tap **Share** and then **Add to Home Screen**.
