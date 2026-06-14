@@ -18,3 +18,8 @@ View your app in AI Studio: https://ai.studio/apps/drive/1JU1zwYocTLmgVsm3sNQpFR
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Installazione PWA
+
+- **Android (Chrome):** apri il menu del browser e seleziona **Installa app** / **Aggiungi a schermata Home**.
+- **iPhone/iPad (Safari):** tocca **Condividi** e poi **Aggiungi alla schermata Home**.
