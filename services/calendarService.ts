@@ -12,6 +12,8 @@ const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/
 const SCOPES = 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly'; 
 
 const BOOKING_COLLECTION = 'bookings';
+const GOOGLE_CALENDAR_EVENT_ID_MAX_LENGTH = 1024;
+const GOOGLE_CALENDAR_EVENT_ID_MIN_LENGTH = 5;
 
 let cachedBookings: Booking[] = [];
 
@@ -126,8 +128,12 @@ const createDeterministicGoogleEventId = (booking: Booking): string => {
     hashB = ((hashB << 5) + hashB + code) >>> 0;
   }
   const candidate = `bk${hashA.toString(16)}${hashB.toString(16)}`;
-  const trimmed = candidate.length > 1024 ? candidate.slice(0, 1024) : candidate;
-  return trimmed.length >= 5 ? trimmed : trimmed.padEnd(5, '0');
+  const trimmed = candidate.length > GOOGLE_CALENDAR_EVENT_ID_MAX_LENGTH
+    ? candidate.slice(0, GOOGLE_CALENDAR_EVENT_ID_MAX_LENGTH)
+    : candidate;
+  return trimmed.length >= GOOGLE_CALENDAR_EVENT_ID_MIN_LENGTH
+    ? trimmed
+    : trimmed.padEnd(GOOGLE_CALENDAR_EVENT_ID_MIN_LENGTH, '0');
 };
 
 export const saveBooking = async (booking: Booking): Promise<void> => {
@@ -551,7 +557,7 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
     for (const booking of unsyncedBookings) {
         const bookingRef = doc(db, BOOKING_COLLECTION, booking.id);
         let targetCalendarId = defaultCalendarId;
-        let googleEventId = '';
+        let googleEventId: string | undefined;
 
         try {
             const latestBookingSnap = await getDoc(bookingRef);
