@@ -117,12 +117,15 @@ const removeUndefinedBookingFields = (data: Omit<Booking, 'id'>): Record<string,
 
 const createDeterministicGoogleEventId = (booking: Booking): string => {
   const seed = `${booking.id}-${booking.startTime}-${booking.locationId}`;
-  const normalized = seed.toLowerCase().replace(/[^a-v0-9]/g, '');
-  let hash = 0;
-  for (let i = 0; i < normalized.length; i++) {
-    hash = (hash * 31 + normalized.charCodeAt(i)) >>> 0;
+  let hashA = 2166136261;
+  let hashB = 0;
+  for (let i = 0; i < seed.length; i++) {
+    const code = seed.charCodeAt(i);
+    hashA ^= code;
+    hashA = Math.imul(hashA, 16777619) >>> 0;
+    hashB = ((hashB << 5) + hashB + code) >>> 0;
   }
-  const candidate = `bk${normalized}${hash.toString(16)}`;
+  const candidate = `bk${hashA.toString(16)}${hashB.toString(16)}`;
   const trimmed = candidate.length > 1024 ? candidate.slice(0, 1024) : candidate;
   return trimmed.length >= 5 ? trimmed : trimmed.padEnd(5, '0');
 };
@@ -558,6 +561,7 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
 
             const latestBooking = { id: latestBookingSnap.id, ...latestBookingSnap.data() } as Booking;
             if (latestBooking.googleEventId) {
+                successCount++;
                 continue;
             }
 
@@ -602,7 +606,7 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
                 handleAuthError();
                 break;
             }
-            if (error.status === 409 && googleEventId) {
+            if (error.status === 409) {
                 await updateDoc(bookingRef, {
                     googleEventId: googleEventId,
                     targetCalendarId: targetCalendarId
