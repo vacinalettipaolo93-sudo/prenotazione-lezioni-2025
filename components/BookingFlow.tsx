@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { TimeSlot, Booking, Sport, SportLocation, LessonType, LessonDuration, AppConfig } from '../types';
 import { getAvailableSlots, saveBooking } from '../services/calendarService';
 import { getAppConfig, initConfigListener } from '../services/configService';
@@ -39,6 +39,7 @@ const BookingFlow: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null);
   const [generatedPlan, setGeneratedPlan] = useState<string>('');
+  const isConfirmingRef = useRef(false);
   const isAthleticPreparationSport = selectedSport?.offerType === 'ATHLETIC_PREPARATION';
 
   // Listen for real-time config updates (e.g. Min Notice changes)
@@ -90,10 +91,12 @@ const BookingFlow: React.FC = () => {
   };
 
   const handleConfirm = async () => {
+      if (isSubmitting || isConfirmingRef.current) return;
       if (!selectedSport) return;
       if (!isAthleticPreparationSport && (!selectedSlot || !selectedLocation || !selectedDuration)) return;
       if (isAthleticPreparationSport && !athleticRequest.trim()) return;
 
+      isConfirmingRef.current = true;
       setIsSubmitting(true);
       try {
           const aiPlan = await generateLessonPlan({
@@ -134,6 +137,7 @@ const BookingFlow: React.FC = () => {
           alert('Si è verificato un errore. Riprova.');
       } finally {
           setIsSubmitting(false);
+          isConfirmingRef.current = false;
       }
   };
 

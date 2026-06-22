@@ -115,6 +115,18 @@ const removeUndefinedBookingFields = (data: Omit<Booking, 'id'>): Record<string,
     Object.entries(data).filter(([, value]) => value !== undefined)
   );
 
+const createDeterministicGoogleEventId = (booking: Booking): string => {
+  const seed = `${booking.id}-${booking.startTime}-${booking.locationId}`;
+  const normalized = seed.toLowerCase().replace(/[^a-v0-9]/g, '');
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  const candidate = `bk${normalized}${hash.toString(16)}`;
+  const trimmed = candidate.slice(0, 1024);
+  return trimmed.length >= 5 ? trimmed : trimmed.padEnd(5, '0');
+};
+
 export const saveBooking = async (booking: Booking): Promise<void> => {
   try {
       const { id, ...bookingDataRaw } = booking;
@@ -534,35 +546,50 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
     let successCount = 0;
 
     for (const booking of unsyncedBookings) {
+        const bookingRef = doc(db, BOOKING_COLLECTION, booking.id);
+        let targetCalendarId = defaultCalendarId;
+        let googleEventId = '';
+
         try {
-            let targetCalendarId = defaultCalendarId;
-            const sport = config.sports.find(s => s.id === booking.sportId);
+            const latestBookingSnap = await getDoc(bookingRef);
+            if (!latestBookingSnap.exists()) {
+                continue;
+            }
+
+            const latestBooking = { id: latestBookingSnap.id, ...latestBookingSnap.data() } as Booking;
+            if (latestBooking.googleEventId) {
+                continue;
+            }
+
+            const sport = config.sports.find(s => s.id === latestBooking.sportId);
             if (sport) {
-                const location = sport.locations.find(l => l.id === booking.locationId);
+                const location = sport.locations.find(l => l.id === latestBooking.locationId);
                 if (location && location.googleCalendarId) {
                     targetCalendarId = location.googleCalendarId;
                 }
             }
 
+            googleEventId = createDeterministicGoogleEventId(latestBooking);
+
             const event = {
-                'summary': `🎾 ${booking.sportName}: ${booking.customerName}`,
-                'location': booking.locationName,
-                'description': `Cliente: ${booking.customerName} (${booking.customerEmail})\nTelefono: ${booking.customerPhone || 'N/A'}\nTipo: ${booking.lessonTypeName || 'Standard'}\nLivello: ${booking.skillLevel}\nNote: ${booking.notes || 'Nessuna'}\n\nPiano AI: ${booking.aiLessonPlan?.substring(0, 100)}...`,
+                'summary': `🎾 ${latestBooking.sportName}: ${latestBooking.customerName}`,
+                'location': latestBooking.locationName,
+                'description': `Cliente: ${latestBooking.customerName} (${latestBooking.customerEmail})\nTelefono: ${latestBooking.customerPhone || 'N/A'}\nTipo: ${latestBooking.lessonTypeName || 'Standard'}\nLivello: ${latestBooking.skillLevel}\nNote: ${latestBooking.notes || 'Nessuna'}\n\nPiano AI: ${latestBooking.aiLessonPlan?.substring(0, 100)}...`,
                 'start': {
-                    'dateTime': booking.startTime, 
+                    'dateTime': latestBooking.startTime, 
                 },
                 'end': {
-                    'dateTime': new Date(new Date(booking.startTime).getTime() + booking.durationMinutes * 60000).toISOString(), 
+                    'dateTime': new Date(new Date(latestBooking.startTime).getTime() + latestBooking.durationMinutes * 60000).toISOString(), 
                 }
             };
 
             const response = await gapi.client.calendar.events.insert({
                 'calendarId': targetCalendarId,
+                'eventId': googleEventId,
                 'resource': event
             });
 
             if (response.result && response.result.id) {
-                const bookingRef = doc(db, BOOKING_COLLECTION, booking.id);
                 await updateDoc(bookingRef, { 
                     googleEventId: response.result.id,
                     targetCalendarId: targetCalendarId
@@ -574,6 +601,14 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
             if (error.status === 401) {
                 handleAuthError();
                 break;
+            }
+            if (error.status === 409 && googleEventId) {
+                await updateDoc(bookingRef, {
+                    googleEventId: googleEventId,
+                    targetCalendarId: targetCalendarId
+                });
+                successCount++;
+                continue;
             }
             console.error(`Errore export prenotazione ${booking.customerName}:`, error);
         }
