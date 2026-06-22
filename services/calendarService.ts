@@ -119,6 +119,8 @@ const removeUndefinedBookingFields = (data: Omit<Booking, 'id'>): Record<string,
 
 const createDeterministicGoogleEventId = (booking: Booking): string => {
   const seed = `${booking.id}-${booking.startTime}-${booking.locationId}`;
+  // Use two lightweight deterministic hashes to reduce collision risk while keeping IDs stable
+  // across retries/double processing of the same booking.
   let hashA = 2166136261;
   let hashB = 0;
   for (let i = 0; i < seed.length; i++) {
@@ -560,6 +562,7 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
         let googleEventId: string | undefined;
 
         try {
+            // Re-read the booking to make export idempotent even with stale cache, retries or parallel workers.
             const latestBookingSnap = await getDoc(bookingRef);
             if (!latestBookingSnap.exists()) {
                 continue;
@@ -613,6 +616,16 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
                 break;
             }
             if (error.status === 409) {
+                if (!googleEventId) {
+                    continue;
+                }
+                const existingEvent = await gapi.client.calendar.events.get({
+                    calendarId: targetCalendarId,
+                    eventId: googleEventId
+                });
+                if (!existingEvent.result || existingEvent.result.id !== googleEventId) {
+                    continue;
+                }
                 await updateDoc(bookingRef, {
                     googleEventId: googleEventId,
                     targetCalendarId: targetCalendarId
