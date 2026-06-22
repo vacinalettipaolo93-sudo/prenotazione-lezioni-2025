@@ -119,11 +119,11 @@ const createDeterministicGoogleEventId = (booking: Booking): string => {
   const seed = `${booking.id}-${booking.startTime}-${booking.locationId}`;
   const normalized = seed.toLowerCase().replace(/[^a-v0-9]/g, '');
   let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < normalized.length; i++) {
+    hash = (hash * 31 + normalized.charCodeAt(i)) >>> 0;
   }
   const candidate = `bk${normalized}${hash.toString(16)}`;
-  const trimmed = candidate.slice(0, 1024);
+  const trimmed = candidate.length > 1024 ? candidate.slice(0, 1024) : candidate;
   return trimmed.length >= 5 ? trimmed : trimmed.padEnd(5, '0');
 };
 
