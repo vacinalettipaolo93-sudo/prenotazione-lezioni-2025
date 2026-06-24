@@ -9,7 +9,9 @@ import {
   syncGoogleEventsToFirebase,
   exportBookingsToGoogle,
   listGoogleCalendars,
-  initBookingListener
+  initBookingListener,
+  deleteBooking,
+  updateBooking
 } from '../services/calendarService';
 import {
   getAppConfig,
@@ -37,10 +39,53 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
+type BookingStatus = 'active' | 'expired' | 'cancelled';
+
+const getLocalDateFromISO = (isoDate: string): string => {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return '';
+  const tzOffset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - tzOffset).toISOString().slice(0, 10);
+};
+
+const getLocalTimeFromISO = (isoDate: string): string => {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', hour12: false });
+};
+
+const buildISOFromLocalDateTime = (date: string, time: string): string => {
+  const parsed = new Date(`${date}T${time}`);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString();
+};
+
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   const [activeTab, setActiveTab] = useState<'calendar' | 'bookings' | 'config' | 'schedule' | 'home'>('calendar');
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [rawBookings, setRawBookings] = useState<Booking[]>([]);
+  const [bookingsView, setBookingsView] = useState<'active' | 'history'>('active');
+  const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
+  const [bookingEditForm, setBookingEditForm] = useState<{
+    startDate: string;
+    startTime: string;
+    customerName: string;
+    customerEmail: string;
+    customerPhone: string;
+    lessonTypeName: string;
+    durationMinutes: string;
+    notes: string;
+    athleticRequest: string;
+  }>({
+    startDate: '',
+    startTime: '',
+    customerName: '',
+    customerEmail: '',
+    customerPhone: '',
+    lessonTypeName: '',
+    durationMinutes: '',
+    notes: '',
+    athleticRequest: ''
+  });
 
   const [isConnected, setIsConnected] = useState(isCalendarConnected());
   const [isConnecting, setIsConnecting] = useState(false);
@@ -184,11 +229,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     });
 
     const unsubBookings = initBookingListener((newBookings: Booking[]) => {
-      // Mostra solo quelle NON passate e non "EXTERNAL_BUSY" (se presente)
-      const now = new Date();
       const filtered = newBookings
-        .filter((b) => (b as any).sportName !== 'EXTERNAL_BUSY')
-        .filter((b) => Boolean(b.athleticRequest) || new Date(b.startTime) >= now)
+        .filter((b) => b.sportName !== 'EXTERNAL_BUSY')
         .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 
       setRawBookings(filtered);
@@ -530,6 +572,108 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     alert('Preavviso aggiornato!');
   };
 
+  const activeBookings = useMemo(
+    () => {
+      const now = new Date();
+      return rawBookings.filter((booking) => (booking.status ?? 'active') === 'active' && new Date(booking.startTime) >= now);
+    },
+    [rawBookings]
+  );
+
+  const historicalBookings = useMemo(
+    () => {
+      const now = new Date();
+      return rawBookings.filter((booking) => (booking.status ?? 'active') !== 'active' || new Date(booking.startTime) < now);
+    },
+    [rawBookings]
+  );
+
+  const resetBookingEditor = () => {
+    setEditingBookingId(null);
+    setBookingEditForm({
+      startDate: '',
+      startTime: '',
+      customerName: '',
+      customerEmail: '',
+      customerPhone: '',
+      lessonTypeName: '',
+      durationMinutes: '',
+      notes: '',
+      athleticRequest: ''
+    });
+  };
+
+  const handleStartBookingEdit = (booking: Booking) => {
+    setEditingBookingId(booking.id);
+    setBookingEditForm({
+      startDate: getLocalDateFromISO(booking.startTime),
+      startTime: getLocalTimeFromISO(booking.startTime),
+      customerName: booking.customerName,
+      customerEmail: booking.customerEmail,
+      customerPhone: booking.customerPhone ?? '',
+      lessonTypeName: booking.lessonTypeName ?? '',
+      durationMinutes: String(booking.durationMinutes ?? ''),
+      notes: booking.notes ?? '',
+      athleticRequest: booking.athleticRequest ?? ''
+    });
+  };
+
+  const handleSaveBookingEdit = async (booking: Booking) => {
+    if (!bookingEditForm.startDate || !bookingEditForm.startTime) {
+      alert('Inserisci data e ora valide.');
+      return;
+    }
+
+    const nextStartTime = buildISOFromLocalDateTime(bookingEditForm.startDate, bookingEditForm.startTime);
+    if (!nextStartTime) {
+      alert('Data o ora non valide.');
+      return;
+    }
+
+    const durationMinutes = Number(bookingEditForm.durationMinutes);
+    if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+      alert('Durata non valida.');
+      return;
+    }
+
+    try {
+      await updateBooking(booking.id, {
+        startTime: nextStartTime,
+        date: bookingEditForm.startDate,
+        timeSlotId: nextStartTime,
+        customerName: bookingEditForm.customerName.trim(),
+        customerEmail: bookingEditForm.customerEmail.trim(),
+        customerPhone: bookingEditForm.customerPhone.trim() || undefined,
+        lessonTypeName: bookingEditForm.lessonTypeName.trim() || undefined,
+        durationMinutes,
+        notes: bookingEditForm.notes.trim() || undefined,
+        athleticRequest: bookingEditForm.athleticRequest.trim() || undefined,
+        status: 'active'
+      });
+      resetBookingEditor();
+    } catch (error) {
+      console.error('Errore salvataggio modifica prenotazione:', error);
+      alert('Errore durante il salvataggio della prenotazione.');
+    }
+  };
+
+  const handleCancelBooking = async (bookingId: string) => {
+    if (!window.confirm('Vuoi cancellare questa prenotazione?')) return;
+
+    try {
+      await deleteBooking(bookingId);
+    } catch (error) {
+      console.error('Errore cancellazione prenotazione:', error);
+      alert('Errore durante la cancellazione della prenotazione.');
+    }
+  };
+
+  const getBookingStatusLabel = (status: BookingStatus) => {
+    if (status === 'cancelled') return 'Cancellata';
+    if (status === 'expired') return 'Scaduta';
+    return 'Attiva';
+  };
+
   const handleLogout = () => {
     logout();
     onLogout();
@@ -726,17 +870,43 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       {/* TAB: BOOKINGS */}
       {activeTab === 'bookings' && (
         <div className="animate-in fade-in space-y-6">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold text-white">Lezioni Prenotate (da fare)</h2>
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+            <h2 className="text-xl font-bold text-white">Prenotazioni</h2>
+            <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
+              <button
+                onClick={() => setBookingsView('active')}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-all ${
+                  bookingsView === 'active' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Operative ({activeBookings.length})
+              </button>
+              <button
+                onClick={() => setBookingsView('history')}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-all ${
+                  bookingsView === 'history' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Storico ({historicalBookings.length})
+              </button>
+            </div>
           </div>
 
-          {rawBookings.length === 0 ? (
+          {bookingsView === 'active' && activeBookings.length === 0 ? (
             <div className="text-center py-20 bg-slate-800/50 rounded-xl border border-slate-700 text-slate-500">
-              Nessuna prenotazione futura trovata.
+              Nessuna prenotazione attiva trovata.
             </div>
-          ) : (
+          ) : null}
+
+          {bookingsView === 'history' && historicalBookings.length === 0 ? (
+            <div className="text-center py-20 bg-slate-800/50 rounded-xl border border-slate-700 text-slate-500">
+              Nessuna prenotazione nello storico.
+            </div>
+          ) : null}
+
+          {(bookingsView === 'active' ? activeBookings : historicalBookings).length > 0 && (
             <div className="space-y-4">
-              {rawBookings.map((booking) => (
+              {(bookingsView === 'active' ? activeBookings : historicalBookings).map((booking) => (
                 <div key={booking.id} className="p-4 rounded-xl border bg-slate-800/50 border-slate-700 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
                   <div>
                     <div className="flex items-center gap-3 mb-1">
@@ -757,6 +927,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                       {booking.customerPhone ? ` • ${booking.customerPhone}` : ''} • {booking.customerEmail}
                     </div>
 
+                    {bookingsView === 'history' && (
+                      <div className="text-xs text-slate-400 mt-2">
+                        Stato: {getBookingStatusLabel((booking.status ?? 'active') as BookingStatus)}
+                      </div>
+                    )}
+
                     {(booking.athleticRequest || booking.notes) && (
                       <div className="text-xs text-slate-500 mt-2">
                         {booking.athleticRequest ? 'Richiesta preparazione:' : 'Note:'}{' '}
@@ -774,7 +950,98 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         {booking.durationMinutes} min
                       </span>
                     )}
+                    {bookingsView === 'active' && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          className="text-xs w-full"
+                          onClick={() => handleStartBookingEdit(booking)}
+                        >
+                          Modifica
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="text-xs w-full border-red-500/40 text-red-300 hover:text-red-200"
+                          onClick={() => handleCancelBooking(booking.id)}
+                        >
+                          Cancella
+                        </Button>
+                      </>
+                    )}
                   </div>
+
+                  {bookingsView === 'active' && editingBookingId === booking.id && (
+                    <div className="w-full border border-slate-700 rounded-lg bg-slate-900/60 p-4 space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <input
+                          type="date"
+                          className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-sm"
+                          value={bookingEditForm.startDate}
+                          onChange={(e) => setBookingEditForm((prev) => ({ ...prev, startDate: e.target.value }))}
+                        />
+                        <input
+                          type="time"
+                          className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-sm"
+                          value={bookingEditForm.startTime}
+                          onChange={(e) => setBookingEditForm((prev) => ({ ...prev, startTime: e.target.value }))}
+                        />
+                        <input
+                          className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-sm"
+                          value={bookingEditForm.customerName}
+                          onChange={(e) => setBookingEditForm((prev) => ({ ...prev, customerName: e.target.value }))}
+                          placeholder="Nome cliente"
+                        />
+                        <input
+                          className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-sm"
+                          value={bookingEditForm.customerEmail}
+                          onChange={(e) => setBookingEditForm((prev) => ({ ...prev, customerEmail: e.target.value }))}
+                          placeholder="Email cliente"
+                        />
+                        <input
+                          className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-sm"
+                          value={bookingEditForm.customerPhone}
+                          onChange={(e) => setBookingEditForm((prev) => ({ ...prev, customerPhone: e.target.value }))}
+                          placeholder="Telefono cliente"
+                        />
+                        <input
+                          type="number"
+                          min={1}
+                          className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-sm"
+                          value={bookingEditForm.durationMinutes}
+                          onChange={(e) => setBookingEditForm((prev) => ({ ...prev, durationMinutes: e.target.value }))}
+                          placeholder="Durata (min)"
+                        />
+                        <input
+                          className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-sm"
+                          value={bookingEditForm.lessonTypeName}
+                          onChange={(e) => setBookingEditForm((prev) => ({ ...prev, lessonTypeName: e.target.value }))}
+                          placeholder="Tipo lezione"
+                        />
+                        <input
+                          className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-sm"
+                          value={bookingEditForm.notes}
+                          onChange={(e) => setBookingEditForm((prev) => ({ ...prev, notes: e.target.value }))}
+                          placeholder="Note"
+                        />
+                      </div>
+                      {booking.athleticRequest && (
+                        <textarea
+                          className="w-full p-2 bg-slate-900 border border-slate-600 rounded text-white text-sm min-h-[80px]"
+                          value={bookingEditForm.athleticRequest}
+                          onChange={(e) => setBookingEditForm((prev) => ({ ...prev, athleticRequest: e.target.value }))}
+                          placeholder="Richiesta preparazione"
+                        />
+                      )}
+                      <div className="flex gap-2 justify-end">
+                        <Button variant="ghost" className="text-xs" onClick={resetBookingEditor}>
+                          Annulla
+                        </Button>
+                        <Button className="text-xs" onClick={() => handleSaveBookingEdit(booking)}>
+                          Salva modifiche
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

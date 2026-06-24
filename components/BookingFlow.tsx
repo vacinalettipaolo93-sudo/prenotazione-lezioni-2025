@@ -123,7 +123,8 @@ const BookingFlow: React.FC = () => {
               skillLevel: formData.level,
               notes: isAthleticPreparationSport ? undefined : formData.notes,
               athleticRequest: isAthleticPreparationSport ? athleticRequest.trim() : undefined,
-              aiLessonPlan: aiPlan
+              aiLessonPlan: aiPlan,
+              status: 'active'
           };
 
           await saveBooking(newBooking);
