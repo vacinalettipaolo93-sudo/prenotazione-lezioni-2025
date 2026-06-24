@@ -106,6 +106,7 @@ export interface Booking {
   aiLessonPlan?: string;
   targetCalendarId?: string; // ID del calendario dove è stata salvata la prenotazione
   googleEventId?: string; // ID dell'evento creato su Google Calendar (se sincronizzato)
+  status?: 'active' | 'expired' | 'cancelled';
 }
 
 export interface CalendarEvent {

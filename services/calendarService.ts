@@ -21,6 +21,65 @@ let gisInited = false;
 let autoSyncInterval: any = null;
 let initPromise: Promise<void> | null = null;
 
+const getBookingDateTime = (booking: Booking): Date | null => {
+    if (booking.startTime) {
+        const startDate = new Date(booking.startTime);
+        if (!Number.isNaN(startDate.getTime())) {
+            return startDate;
+        }
+    }
+
+    if (booking.date) {
+        const fallbackDate = new Date(`${booking.date}T00:00:00`);
+        if (!Number.isNaN(fallbackDate.getTime())) {
+            return fallbackDate;
+        }
+    }
+
+    return null;
+};
+
+const getEffectiveBookingStatus = (booking: Booking, referenceDate = new Date()): NonNullable<Booking['status']> => {
+    if (booking.sportName === 'EXTERNAL_BUSY') {
+        return 'active';
+    }
+    if (booking.status === 'cancelled') {
+        return 'cancelled';
+    }
+
+    const bookingDateTime = getBookingDateTime(booking);
+    const isPast = bookingDateTime ? bookingDateTime.getTime() < referenceDate.getTime() : false;
+
+    if (booking.status === 'expired') {
+        return 'expired';
+    }
+    if (booking.status === 'active') {
+        return isPast ? 'expired' : 'active';
+    }
+
+    return isPast ? 'expired' : 'active';
+};
+
+const reconcileBookingStatuses = async (bookings: Booking[]): Promise<Booking[]> => {
+    const now = new Date();
+
+    const normalizedBookings = await Promise.all(bookings.map(async (booking) => {
+        const status = getEffectiveBookingStatus(booking, now);
+
+        if (booking.sportName !== 'EXTERNAL_BUSY' && booking.status !== status) {
+            try {
+                await updateDoc(doc(db, BOOKING_COLLECTION, booking.id), { status });
+            } catch (error) {
+                console.warn(`Impossibile aggiornare status prenotazione ${booking.id}:`, error);
+            }
+        }
+
+        return { ...booking, status };
+    }));
+
+    return normalizedBookings;
+};
+
 // --- REAL-TIME SUBSCRIPTION ---
 
 export const initBookingListener = (callback: (bookings: Booking[]) => void) => {
@@ -36,8 +95,12 @@ export const initBookingListener = (callback: (bookings: Booking[]) => void) => 
         snapshot.forEach(doc => {
             loadedBookings.push({ id: doc.id, ...doc.data() } as Booking);
         });
-        cachedBookings = loadedBookings;
-        callback(loadedBookings);
+
+        void (async () => {
+            const normalizedBookings = await reconcileBookingStatuses(loadedBookings);
+            cachedBookings = normalizedBookings;
+            callback(normalizedBookings);
+        })();
     }, (error) => {
         console.error("Errore sync prenotazioni:", error);
     });
@@ -79,9 +142,9 @@ export const deleteBooking = async (bookingId: string): Promise<void> => {
             }
         }
 
-        // 3. Elimina dal database Firebase
-        await deleteDoc(docRef);
-        console.log(`Prenotazione ${bookingId} eliminata dal DB.`);
+        // 3. Soft delete dal database Firebase
+        await updateDoc(docRef, { status: 'cancelled' });
+        console.log(`Prenotazione ${bookingId} impostata come cancelled.`);
     } catch (error) {
         console.error("Errore eliminazione prenotazione:", error);
         throw error;
@@ -91,7 +154,10 @@ export const deleteBooking = async (bookingId: string): Promise<void> => {
 export const updateBooking = async (bookingId: string, updates: Partial<Booking>): Promise<void> => {
     try {
         const bookingRef = doc(db, BOOKING_COLLECTION, bookingId);
-        await updateDoc(bookingRef, updates);
+        const cleanedUpdates = Object.fromEntries(
+            Object.entries(updates).filter(([, value]) => value !== undefined)
+        );
+        await updateDoc(bookingRef, cleanedUpdates);
         console.log(`Prenotazione ${bookingId} aggiornata.`);
     } catch (error) {
         console.error("Errore aggiornamento prenotazione:", error);
@@ -100,7 +166,9 @@ export const updateBooking = async (bookingId: string, updates: Partial<Booking>
 };
 
 export const getAllCalendarEvents = (): CalendarEvent[] => {
-  return cachedBookings.map(b => ({
+  return cachedBookings
+    .filter(b => b.sportName === 'EXTERNAL_BUSY' || getEffectiveBookingStatus(b) === 'active')
+    .map(b => ({
     id: b.id,
     title: b.sportName === 'EXTERNAL_BUSY' ? 'Occupato (Google)' : `${b.sportName}: ${b.customerName}`,
     start: b.startTime,
@@ -118,7 +186,10 @@ const removeUndefinedBookingFields = (data: Omit<Booking, 'id'>): Record<string,
 export const saveBooking = async (booking: Booking): Promise<void> => {
   try {
       const { id, ...bookingDataRaw } = booking;
-      const bookingData = removeUndefinedBookingFields(bookingDataRaw);
+      const bookingData = removeUndefinedBookingFields({
+          ...bookingDataRaw,
+          status: bookingDataRaw.status ?? 'active'
+      });
       await addDoc(collection(db, BOOKING_COLLECTION), bookingData);
       console.log(`[Firebase] Booking saved for: ${booking.customerName}`);
   } catch (e) {
@@ -525,6 +596,7 @@ export const exportBookingsToGoogle = async (defaultCalendarId: string = 'primar
         !b.googleEventId && 
         b.sportName !== 'EXTERNAL_BUSY' && 
         !b.athleticRequest &&
+        getEffectiveBookingStatus(b) === 'active' &&
         new Date(b.startTime) > new Date()
     );
 
