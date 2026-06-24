@@ -241,7 +241,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         );
         if (locallyCancelledIds.size === 0) return filtered;
         return filtered.map(b =>
-          locallyCancelledIds.has(b.id) && (b.status === 'active' || b.status == null)
+          locallyCancelledIds.has(b.id) && (b.status ?? 'active') === 'active'
             ? { ...b, status: 'cancelled' as const }
             : b
         );
