@@ -573,12 +573,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
   };
 
   const activeBookings = useMemo(
-    () => rawBookings.filter((booking) => (booking.status ?? 'active') === 'active' && new Date(booking.startTime) >= new Date()),
+    () => {
+      const now = new Date();
+      return rawBookings.filter((booking) => (booking.status ?? 'active') === 'active' && new Date(booking.startTime) >= now);
+    },
     [rawBookings]
   );
 
   const historicalBookings = useMemo(
-    () => rawBookings.filter((booking) => (booking.status ?? 'active') !== 'active' || new Date(booking.startTime) < new Date()),
+    () => {
+      const now = new Date();
+      return rawBookings.filter((booking) => (booking.status ?? 'active') !== 'active' || new Date(booking.startTime) < now);
+    },
     [rawBookings]
   );
 

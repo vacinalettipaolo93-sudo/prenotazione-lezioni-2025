@@ -20,6 +20,7 @@ let gapiInited = false;
 let gisInited = false;
 let autoSyncInterval: any = null;
 let initPromise: Promise<void> | null = null;
+let bookingReconcileQueue: Promise<void> = Promise.resolve();
 
 const getBookingDateTime = (booking: Booking): Date | null => {
     if (booking.startTime) {
@@ -96,11 +97,15 @@ export const initBookingListener = (callback: (bookings: Booking[]) => void) => 
             loadedBookings.push({ id: doc.id, ...doc.data() } as Booking);
         });
 
-        void (async () => {
-            const normalizedBookings = await reconcileBookingStatuses(loadedBookings);
-            cachedBookings = normalizedBookings;
-            callback(normalizedBookings);
-        })();
+        bookingReconcileQueue = bookingReconcileQueue
+            .then(async () => {
+                const normalizedBookings = await reconcileBookingStatuses(loadedBookings);
+                cachedBookings = normalizedBookings;
+                callback(normalizedBookings);
+            })
+            .catch((error) => {
+                console.error('Errore riconciliazione stati prenotazioni:', error);
+            });
     }, (error) => {
         console.error("Errore sync prenotazioni:", error);
     });
@@ -166,8 +171,9 @@ export const updateBooking = async (bookingId: string, updates: Partial<Booking>
 };
 
 export const getAllCalendarEvents = (): CalendarEvent[] => {
+  const now = new Date();
   return cachedBookings
-    .filter(b => b.sportName === 'EXTERNAL_BUSY' || getEffectiveBookingStatus(b) === 'active')
+    .filter((b) => b.sportName === 'EXTERNAL_BUSY' || getEffectiveBookingStatus(b, now) === 'active')
     .map(b => ({
     id: b.id,
     title: b.sportName === 'EXTERNAL_BUSY' ? 'Occupato (Google)' : `${b.sportName}: ${b.customerName}`,
