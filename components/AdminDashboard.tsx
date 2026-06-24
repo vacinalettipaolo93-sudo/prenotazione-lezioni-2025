@@ -233,7 +233,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
         .filter((b) => b.sportName !== 'EXTERNAL_BUSY')
         .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 
-      setRawBookings(filtered);
+      // Use the functional form to preserve any locally-cancelled bookings that
+      // may not yet be confirmed in a stale snapshot from the reconcile queue.
+      setRawBookings(prev => {
+        const locallyCancelledIds = new Set(
+          prev.filter(b => b.status === 'cancelled').map(b => b.id)
+        );
+        if (locallyCancelledIds.size === 0) return filtered;
+        return filtered.map(b =>
+          locallyCancelledIds.has(b.id) && (b.status ?? 'active') === 'active'
+            ? { ...b, status: 'cancelled' as const }
+            : b
+        );
+      });
       setEvents(getAllCalendarEvents());
     });
 
@@ -662,6 +674,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
     try {
       await deleteBooking(bookingId);
+      // Optimistic update: immediately reflect the cancellation in the UI without
+      // waiting for the Firestore onSnapshot listener, which may be queued behind
+      // earlier reconcile cycles with stale data.
+      setRawBookings(prev =>
+        prev.map(b => b.id === bookingId ? { ...b, status: 'cancelled' as const } : b)
+      );
     } catch (error) {
       console.error('Errore cancellazione prenotazione:', error);
       alert('Errore durante la cancellazione della prenotazione.');
